@@ -96,6 +96,41 @@ build_digest.py      morning summary of what ran overnight
 Python for the pipeline, Node for document rendering, Anthropic's API for
 scoring and drafting.
 
+## The profile is two files, and the skills file wins
+
+`profile/master_profile.json` holds work history, education, and positioning
+notes. Achievements carry their metrics; the drafting step is told to use
+nothing that is not in here.
+
+`profile/skills_inventory.csv` is the source of truth for skills. It is a
+spreadsheet on purpose, because skills change weekly and JSON is a hostile
+place to edit a list of 90 things.
+
+| column | meaning |
+|---|---|
+| `category` | grouping, e.g. Marketing Measurement, Languages & Query. A `Certifications` category is routed to the certifications list instead. |
+| `skill` | the skill itself |
+| `have_it` | `yes` puts it on resumes. Anything else excludes it. |
+| `proficiency` | Expert / Advanced / Working / Familiar, so the model can lead with real strengths |
+| `source` | where the row came from; informational |
+| `notes` | free text, appended in brackets |
+
+Two decisions here matter more than the format.
+
+**The CSV replaces the JSON's skill fields rather than merging with them.**
+When both exist, the model never sees two contradictory skill lists, and there
+is never a question about which one is current.
+
+**Rows you do not have stay in the file**, marked `have_it=no`. A skill named
+in job postings that you cannot claim is useful information, and deleting it
+loses the fact that you looked at it and decided. Those rows are excluded from
+every document, so the model cannot claim them, while the file still tracks
+the gap between what postings ask for and what you can honestly say.
+
+There is deliberately no script to regenerate the CSV from the JSON. Once the
+CSV exists it is authoritative, and regenerating it would quietly discard your
+edits.
+
 ## It never submits an application
 
 The pipeline stops at drafted documents. It does not open application forms,
