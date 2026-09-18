@@ -1,0 +1,80 @@
+{
+  "name": "Jordan Avery",
+  "credential_suffix": "",
+  "location": "Columbus, OH",
+  "email": "jordan.avery@example.com",
+  "phone": "555-555-5555",
+  "linkedin": "https://www.linkedin.com/in/example/",
+  "target_titles": [
+    "Director of Marketing Analytics",
+    "Head of Marketing Science",
+    "Director, Marketing Data Science"
+  ],
+  "years_experience": "14+ years",
+  "summary": "Marketing analytics leader who builds measurement functions from scratch and connects marketing spend to revenue. Two sentences at most; the pipeline rewrites this per posting.",
+  "positioning_notes": "Lead with measurement and experimentation, not channel management. Prefer roles where the analytics function is being built rather than maintained.",
+  "differentiator": "Builds the measurement practice and the models, rather than managing vendors who do.",
+
+  "work_history": [
+    {
+      "title": "Head of Marketing Analytics",
+      "company": "Northwind Commerce",
+      "company_descriptor": "DTC home goods retailer, ~$400M revenue, ~$90M annual ad spend. NOTE: this field describes the EMPLOYER, not what you personally worked on. The pipeline is told never to turn these markets into your accomplishments.",
+      "dates": "Mar 2021 - Present",
+      "location": "Remote",
+      "highlights": [
+        "Built the marketing measurement function from a standing start, hiring and developing a team of five analysts.",
+        "Deployed Bayesian marketing mix models across eight channels, shifting $12M of annual spend and lifting contribution margin 9%.",
+        "Designed geo-holdout incrementality tests that corrected a 40% overstatement in last-click attribution for paid social.",
+        "Developed a predictive LTV model that reset acquisition bidding, increasing marginal profit on ad spend 22%.",
+        "Established metric definitions and data quality standards adopted across marketing, finance, and product."
+      ]
+    },
+    {
+      "title": "Manager, Marketing Analytics",
+      "company": "Halcyon Media Group",
+      "company_descriptor": "Independent media agency, ~$120M billings, clients across retail, travel, and financial services.",
+      "dates": "Jun 2016 - Feb 2021",
+      "location": "Chicago, IL",
+      "highlights": [
+        "Built attribution and media models governing roughly $75M in annual client media budgets.",
+        "Automated weekly client reporting, cutting analyst production time 60% and freeing the team for analysis.",
+        "Ran the agency's experimentation program, including a test archive that stopped teams repeating known failures."
+      ]
+    },
+    {
+      "title": "Senior Research Analyst",
+      "company": "Brightline Research",
+      "company_descriptor": "Market research firm specializing in consumer packaged goods.",
+      "dates": "Aug 2012 - May 2016",
+      "location": "Columbus, OH",
+      "highlights": [
+        "Designed and fielded syndicated survey research with annual samples above 20,000 respondents.",
+        "Introduced conjoint analysis to the product portfolio, creating a new revenue line for the firm."
+      ]
+    }
+  ],
+
+  "skills": [
+    "Marketing mix modeling",
+    "Multi-touch attribution",
+    "Incrementality testing",
+    "Predictive LTV modeling",
+    "Experimentation design"
+  ],
+  "technical_stack": {
+    "Languages": ["SQL", "Python", "R"],
+    "BI": ["Looker", "Tableau"],
+    "Warehouse": ["Snowflake", "BigQuery"]
+  },
+  "education": [
+    "M.S., Statistics, Example State University",
+    "B.A., Economics, Example College"
+  ],
+  "certifications": [],
+  "professional_memberships": [],
+  "publications": [],
+  "speaking": [],
+  "additional_credentials": [],
+  "peer_testimonials": []
+}

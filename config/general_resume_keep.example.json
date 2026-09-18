@@ -1,0 +1,19 @@
+{
+  "_comment": "Which highlights to carry onto the general (non-tailored) resume, keyed by company name exactly as it appears in master_profile.json. Each string is a PREFIX of a highlight. Omit a company to fall back to its first four highlights.",
+
+  "Northwind Commerce": [
+    "Built the marketing measurement function",
+    "Deployed Bayesian marketing mix models",
+    "Designed geo-holdout incrementality tests",
+    "Developed a predictive LTV model"
+  ],
+  "Halcyon Media Group": [
+    "Built attribution and media models",
+    "Automated weekly client reporting",
+    "Ran the agency's experimentation program"
+  ],
+  "Brightline Research": [
+    "Designed and fielded syndicated survey research",
+    "Introduced conjoint analysis"
+  ]
+}

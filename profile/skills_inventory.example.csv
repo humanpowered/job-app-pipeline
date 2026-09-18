@@ -1,0 +1,21 @@
+category,skill,have_it,proficiency,source,notes
+Marketing Measurement,Marketing mix modeling,yes,Expert,profile,
+Marketing Measurement,Multi-touch attribution,yes,Advanced,profile,
+Marketing Measurement,Incrementality testing,yes,Expert,profile,
+Experimentation & Causal,A/B testing,yes,Expert,profile,
+Experimentation & Causal,Geo-holdout testing,yes,Advanced,profile,
+Experimentation & Causal,Causal inference,yes,Advanced,profile,
+Machine Learning & AI,Predictive analytics,yes,Advanced,profile,
+Machine Learning & AI,Gradient boosting,yes,Working,profile,
+Machine Learning & AI,Deep learning,no,,gap,"Named in postings; not claimed"
+Languages & Query,SQL,yes,Expert,technical_stack,
+Languages & Query,Python,yes,Working,technical_stack,
+Languages & Query,R,yes,Advanced,technical_stack,
+BI & Visualization,Looker,yes,Expert,technical_stack,
+BI & Visualization,Tableau,yes,Advanced,technical_stack,
+Cloud & Warehouse,Snowflake,yes,Working,technical_stack,
+Cloud & Warehouse,BigQuery,yes,Working,technical_stack,
+Data Engineering,dbt,no,,gap,"Worth developing"
+Data Engineering,Airflow,no,,gap,"Worth developing"
+Business & Strategy,Unit economics,yes,Expert,profile,
+Leadership & Management,Hiring and developing analysts,yes,Expert,profile,

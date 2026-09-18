@@ -1,0 +1,21 @@
+# Everything personal. The pipeline reads these; the repo never carries them.
+profile/*
+!profile/*.example.*
+config/boards.yaml
+output/
+logs/
+*.docx
+*.csv
+!profile/skills_inventory.example.csv
+
+# Secrets
+.env
+.claude/
+*.key
+
+# Local junk
+__pycache__/
+*.pyc
+node_modules/
+.DS_Store
+Thumbs.db

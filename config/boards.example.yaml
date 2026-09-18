@@ -1,0 +1,109 @@
+# Where to look for postings. Copy to boards.yaml and edit.
+# boards.yaml is gitignored, since a real one reveals your search.
+
+# Greenhouse board tokens. Find one in a company's careers URL:
+#   https://boards.greenhouse.io/{token}
+greenhouse:
+  - examplecompany
+  - anothercompany
+
+# Lever tokens, similarly:
+#   https://jobs.lever.co/{token}
+lever:
+  - examplecompany
+
+# Workday tenants. From a careers URL like
+#   https://acme.wd5.myworkdayjobs.com/en-US/External
+#   tenant = "acme", host = "wd5", site = "External"
+workday:
+  - tenant: acme
+    host: wd5
+    site: External
+
+# Ashby board names: https://jobs.ashbyhq.com/{board_name}
+ashby:
+  - examplecompany
+
+# SmartRecruiters identifiers: https://jobs.smartrecruiters.com/{company}
+smartrecruiters:
+  - ExampleCompany
+
+# Workable accounts: https://apply.workable.com/{account}
+workable:
+
+# Jooble: a search aggregator, not a per-company board. Free key at
+# https://jooble.org/api/about, set as the JOOBLE_API_KEY env var.
+# Never put keys in this file.
+jooble:
+  enabled: false
+  location: ""              # blank = nationwide
+  pages_per_query: 1
+  queries:
+    - "marketing analytics"
+    - "marketing science"
+    - "marketing measurement"
+
+# Adzuna: free app_id/app_key at https://developer.adzuna.com, set as
+# ADZUNA_APP_ID / ADZUNA_APP_KEY env vars.
+adzuna:
+  enabled: false
+  country: "us"
+  results_per_page: 50
+  pages_per_query: 1
+  queries:
+    - "marketing analytics"
+    - "marketing data science"
+
+# Remotive: remote-only, no key needed.
+remotive:
+  enabled: true
+
+# Careerjet: free key from careerjet.com/partners, set as CAREERJET_API_KEY.
+careerjet:
+  enabled: false
+  location: "usa"
+  pages_per_query: 1
+  page_size: 100
+  queries:
+    - "marketing analytics"
+
+# Jobicy: remote-only, no key needed. Query by industry; the unfiltered feed
+# returns very little of use.
+jobicy:
+  enabled: true
+  geo: "usa"
+  count: 50
+  industries:
+    - data-science
+    - marketing
+
+# Employers to watch regardless of which ATS they run. Some sit on systems
+# with no public feed, so this searches by company name and keeps only hits
+# whose company field matches. Needs JOOBLE_API_KEY.
+company_watchlist:
+  enabled: false
+  location: ""
+  pages_per_company: 1
+  companies:
+    - Example Employer
+
+# Employers to drop no matter which source surfaced them. Matched loosely
+# (case and punctuation insensitive, substring).
+exclude_companies:
+  - Some Company You Left
+
+# Cheap string filter applied before any posting reaches the scorer, so the
+# LLM only sees plausible roles. This is the main cost control.
+title_keywords:
+  - "marketing analytics"
+  - "marketing science"
+  - "marketing measurement"
+  - "marketing data science"
+  - "director, analytics"
+  - "head of analytics"
+  - "attribution"
+
+# Leave empty to accept everything, including remote.
+locations:
+  - "Remote"
+  - "Ohio"
