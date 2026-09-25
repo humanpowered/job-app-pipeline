@@ -132,7 +132,7 @@ def parse_json_response(text: str) -> dict:
         return json.loads(stripped)
 
 
-SALARY_FLOOR = 180_000   # at or above this, seniority concerns don't apply
+SALARY_FLOOR = 160_000   # at or above this, seniority concerns don't apply
 
 # "$150,000 - $185,000" / "$150K-$185K" / "$150,000 to $250,000" and the
 # en/em-dash variants pay-transparency boilerplate tends to use
@@ -173,6 +173,68 @@ def extract_salary_range(text: str) -> tuple[int, int] | None:
         if best is None or high > best[1]:
             best = (low, high)
     return best
+
+
+def require_credentials() -> None:
+    """
+    Fail the run before any work starts if there is no usable credential.
+
+    Without this the nightly run kept reporting success: each posting hit the
+    auth error, got caught by the per-posting handler meant for one bad
+    posting, and was skipped. Scoring was dead for days and the log still said
+    "[OK] pipeline completed".
+
+    An unset ANTHROPIC_API_KEY does not mean there are no credentials. The SDK
+    resolves, in order: ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, an `ant auth
+    login` profile on disk, then Workload Identity Federation env vars. Check
+    for all of them, or this rejects a machine that is perfectly able to run.
+    """
+    if os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"):
+        return
+
+    # Workload Identity Federation: the SDK activates it only when all four are set
+    wif = ("ANTHROPIC_FEDERATION_RULE_ID", "ANTHROPIC_ORGANIZATION_ID",
+           "ANTHROPIC_SERVICE_ACCOUNT_ID")
+    if all(os.environ.get(v) for v in wif) and (
+            os.environ.get("ANTHROPIC_IDENTITY_TOKEN_FILE")
+            or os.environ.get("ANTHROPIC_IDENTITY_TOKEN")):
+        return
+
+    # OAuth profile written by `ant auth login`
+    config_dir = os.environ.get("ANTHROPIC_CONFIG_DIR")
+    if config_dir:
+        candidates = [Path(config_dir)]
+    elif os.name == "nt":
+        candidates = [Path(os.environ.get("APPDATA", "")) / "Anthropic"]
+    else:
+        candidates = [Path.home() / ".config" / "anthropic"]
+    if any((c / "credentials").is_dir() and any((c / "credentials").glob("*.json"))
+           for c in candidates if str(c)):
+        return
+
+    raise SystemExit(
+        "[FATAL] no Anthropic credentials found, so nothing can be scored or drafted.\n"
+        "        Either set a key (then open a new shell):\n"
+        '          setx ANTHROPIC_API_KEY "sk-ant-..."\n'
+        "        or sign in without a static key:\n"
+        "          ant auth login\n"
+        "        Keys: https://platform.claude.com/settings/keys"
+    )
+
+
+# kept so older callers/scripts don't break
+require_api_key = require_credentials
+
+
+def is_auth_error(exc: BaseException) -> bool:
+    """An auth failure is fatal for the whole run, never a per-posting problem."""
+    name = type(exc).__name__.lower()
+    msg = str(exc).lower()
+    return ("authentication" in name
+            or "permissiondenied" in name
+            or "could not resolve authentication method" in msg
+            or "invalid x-api-key" in msg
+            or "401" in msg)
 
 
 def score_posting(posting: dict, profile: dict) -> dict:
@@ -932,6 +994,7 @@ def run(postings: list[dict]):
     resume -- for ones already processed. Returns only the newly-processed
     entries; scored_postings.json on disk holds the full merged history.
     """
+    require_api_key()
     profile = load_profile()
     OUTPUT_DIR.mkdir(exist_ok=True)
     scored_path = OUTPUT_DIR / "scored_postings.json"
@@ -956,6 +1019,12 @@ def run(postings: list[dict]):
         try:
             eval_result = score_posting(posting, profile)
         except Exception as e:
+            if is_auth_error(e):
+                raise SystemExit(
+                    f"[FATAL] the API rejected authentication: {type(e).__name__}: {str(e)[:120]}\n"
+                    "        Stopping. Every remaining posting would fail the same way.\n"
+                    "        Check ANTHROPIC_API_KEY, then re-run."
+                ) from None
             print(f"[skip] scoring failed for {posting['title'][:44]} @ {posting['company']}: "
                   f"{type(e).__name__}: {str(e)[:90]}")
             failures.append((posting, "scoring", str(e)[:120]))
@@ -1012,6 +1081,7 @@ def repair():
     written to scored_postings.json, so the normal run skips it on the next
     pass as already-scored. This retries just the missing pieces.
     """
+    require_api_key()
     profile = load_profile()
     scored_path = OUTPUT_DIR / "scored_postings.json"
     data = json.loads(scored_path.read_text(encoding="utf-8"))

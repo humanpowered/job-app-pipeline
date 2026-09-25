@@ -9,8 +9,12 @@ company at a time. Those results still pass through the same
 title_keywords/locations filter as everything else -- the aggregator's own
 search is a coarse first net.
 """
+import hashlib
+import html
 import os
 import re
+import time
+from datetime import datetime, timedelta
 
 import requests
 import yaml
@@ -226,8 +230,32 @@ def fetch_adzuna(app_id: str, app_key: str, country: str, keywords: str,
             "results_per_page": results_per_page,
             "content-type": "application/json",
         }
-        resp = requests.get(url, params=params, timeout=15)
-        resp.raise_for_status()
+        # Adzuna returns a bare 503 sporadically, with no Retry-After and no
+        # pattern: on 2026-09-23 three of five queries failed while the other
+        # two succeeded seconds apart, same key, same page size. A dropped
+        # query used to cost the whole night's results for that search, and
+        # neighbouring calls were already succeeding, so retry the transient
+        # statuses briefly. Auth and bad-request failures are not retried --
+        # those will fail identically every time.
+        resp, attempts = None, 0
+        for attempt in range(3):
+            resp = requests.get(url, params=params, timeout=15)
+            attempts += 1
+            if resp.status_code not in (429, 500, 502, 503, 504):
+                break
+            if attempt < 2:
+                time.sleep(2 * (attempt + 1))        # 2s, then 4s
+
+        try:
+            resp.raise_for_status()
+        except requests.HTTPError:
+            # The request URL carries app_id and app_key as query params, and
+            # requests puts the whole URL in the exception message -- which
+            # wrote the key in plaintext into every nightly log. Status only.
+            tries = f" after {attempts} attempts" if attempts > 1 else ""
+            raise RuntimeError(
+                f"Adzuna returned {resp.status_code} for query {keywords!r}{tries}"
+            ) from None
         jobs = resp.json().get("results", [])
         if not jobs:
             break
@@ -412,6 +440,267 @@ def fetch_company_watchlist(api_key: str, companies: list[str], location: str = 
     return results
 
 
+def fetch_apify_linkedin(token: str, actor: str, searches: list[dict],
+                         date_posted: str = "", limit_per_search: int = 25,
+                         title_include: list[str] | None = None,
+                         title_exclude: list[str] | None = None) -> list[dict]:
+    """
+    LinkedIn postings by way of an Apify actor.
+
+    LinkedIn has no public jobs API and its terms forbid scraping, so this
+    delegates to a paid third-party actor rather than fetching anything here.
+    It bills per result, which is why title_include/title_exclude are pushed
+    to the actor: filtering server-side means fewer results returned, fewer
+    billed, and fewer junk postings reaching the scorer.
+
+    The actor and its input live in boards.yaml, so swapping actors when one
+    breaks (LinkedIn moved to AI-powered search in August 2026 and deprecated
+    the old filter parameters) is a config change, not a code change.
+    """
+    endpoint = (f"https://api.apify.com/v2/acts/{actor.replace('/', '~')}"
+                f"/run-sync-get-dataset-items")
+    results = []
+
+    for search in searches:
+        payload = {"limit": search.get("limit", limit_per_search)}
+        if search.get("keywords"):
+            payload["keywords"] = search["keywords"]
+        if search.get("location"):
+            payload["location"] = search["location"]
+        if search.get("url_params"):
+            payload["urlParam"] = [{"key": p["key"], "value": str(p["value"])}
+                                   for p in search["url_params"]]
+        if date_posted:
+            payload["datePosted"] = date_posted
+        if title_include:
+            payload["titleInclude"] = title_include
+        if title_exclude:
+            payload["titleExclude"] = title_exclude
+
+        label = f"{search.get('keywords','')} / {search.get('location','anywhere')}"
+        # the sync endpoint holds the connection while the actor runs
+        resp = requests.post(endpoint, json=payload,
+                             headers={"Authorization": f"Bearer {token}"},
+                             timeout=310)
+        if resp.status_code >= 400:
+            # the token rides in the Authorization header, not the URL, so the
+            # status line is safe to log as-is
+            raise RuntimeError(f"Apify returned {resp.status_code} for "
+                               f"search {label!r}: {resp.text[:120]}")
+
+        for j in resp.json():
+            job_id = str(j.get("id") or j.get("jobId") or "")
+            url = (j.get("url") or j.get("link") or j.get("jobUrl")
+                   or (f"https://www.linkedin.com/jobs/view/{job_id}" if job_id else ""))
+            description = j.get("description") or j.get("descriptionText") or ""
+            # the scorer reads pay ranges out of the description text, and this
+            # actor returns salary as its own field
+            if j.get("salary"):
+                description = f"Salary: {j['salary']}\n\n{description}"
+            results.append({
+                "source": "linkedin",
+                "company": j.get("companyName") or j.get("company") or "",
+                "title": j.get("title", ""),
+                "location": j.get("location", ""),
+                "url": url,
+                "description_html": description,
+                "posting_id": job_id or hashlib.sha1(url.encode()).hexdigest()[:12],
+            })
+
+    return results
+
+
+HTML_TAG = re.compile(r"<[^>]+>")
+URL_IN_TEXT = re.compile(r"https?://[^\s\"'>)\]]+")
+# Boards worth linking to when an email mentions one. LinkedIn alert links are
+# tracking redirects, so they are kept only as a last resort.
+REAL_BOARD = re.compile(
+    r"(greenhouse\.io|lever\.co|ashbyhq\.com|myworkdayjobs\.com|smartrecruiters\.com|"
+    r"workable\.com|icims\.com|taleo\.net|oraclecloud\.com|successfactors|jobvite\.com|"
+    r"careers?\.[a-z0-9-]+\.[a-z]{2,})", re.I)
+
+# "Acme is hiring a Director of Analytics"  ->  company, title
+ALERT_HIRING = re.compile(r"^(.+?)\s+is hiring an?\s+(.+)$", re.I)
+# "Director of Analytics at Acme: up to $189K/year"  ->  title, company
+ALERT_AT = re.compile(r"^(.+?)\s+at\s+([^:]+?)(?::.*)?$", re.I)
+
+
+def _decode_header(raw: str) -> str:
+    """
+    Subjects arrive RFC2047-encoded ('=?UTF-8?B?...?=') more often than not.
+
+    Long headers are also folded across lines, so a decoded subject can carry
+    a CRLF mid-sentence. The subject patterns below are line-anchored, so an
+    unflattened subject silently fails to parse and the company falls back to
+    the sender's domain ("linkedin" instead of the employer). Collapse first.
+    """
+    from email.header import decode_header, make_header
+    try:
+        decoded = str(make_header(decode_header(raw or "")))
+    except Exception:
+        decoded = raw or ""
+    return " ".join(decoded.split())
+
+
+def _message_text(msg) -> str:
+    """Plain text body, falling back to HTML with the tags stripped."""
+    plain, html_body = [], []
+    for part in (msg.walk() if msg.is_multipart() else [msg]):
+        if part.get_content_maintype() == "multipart":
+            continue
+        if part.get_filename():
+            continue
+        ctype = part.get_content_type()
+        if ctype not in ("text/plain", "text/html"):
+            continue
+        try:
+            payload = part.get_payload(decode=True) or b""
+            text = payload.decode(part.get_content_charset() or "utf-8", errors="replace")
+        except Exception:
+            continue
+        (plain if ctype == "text/plain" else html_body).append(text)
+
+    text = "\n".join(plain) or HTML_TAG.sub(" ", "\n".join(html_body))
+    text = html.unescape(text)
+    return re.sub(r"[ \t]+\n", "\n", re.sub(r"\n{3,}", "\n\n", text)).strip()
+
+
+def imap_messages(host: str, user: str, password: str, mailbox: str = "INBOX",
+                  since_days: int = 3, max_messages: int = 60,
+                  gmail_query: str | None = None):
+    """
+    Read recent messages. Shared by the job-posting source and the reply
+    checker, so there is one place that knows how to talk to a mailbox.
+
+    Read-only by construction: the mailbox is selected with readonly=True, so
+    nothing is ever marked read, moved, or deleted.
+
+    Yields dicts of sender, subject, body, date, message_id, uid.
+    """
+    import imaplib
+    from email import message_from_bytes
+    from email.utils import parseaddr, parsedate_to_datetime
+
+    # Google shows app passwords as "abcd efgh ijkl mnop"; pasted with the
+    # spaces, the login is rejected.
+    password = (password or "").replace(" ", "")
+    since = (datetime.now() - timedelta(days=since_days)).strftime("%d-%b-%Y")
+
+    conn = imaplib.IMAP4_SSL(host)
+    try:
+        conn.login(user, password)
+        conn.select(mailbox, readonly=True)
+
+        # A plain SINCE search returns everything, and max_messages then keeps
+        # only the newest N -- which on a busy inbox (40+ a day here) means a
+        # 45-day window really reached back about four days, and older replies
+        # were never seen. Gmail's X-GM-RAW runs the search server-side, so
+        # only matching mail is fetched.
+        status, data = "NO", None
+        if gmail_query:
+            try:
+                # The query carries its own double quotes, so it cannot be
+                # passed as a plain argument -- imaplib mangles it and the
+                # search fails, which silently fell back to fetching the whole
+                # inbox. Send it as a literal instead.
+                conn.literal = gmail_query.encode("utf-8")
+                status, data = conn.search("UTF-8", "X-GM-RAW")
+            except Exception as exc:
+                print(f"  [warn] Gmail server-side search failed ({type(exc).__name__}: "
+                      f"{str(exc)[:60]}); falling back to a date-only search, which "
+                      f"may miss older mail")
+                status = "NO"
+        if status != "OK":
+            if gmail_query:
+                print("  [warn] Gmail server-side search unavailable; "
+                      "falling back to a date-only search")
+            status, data = conn.search(None, f"(SINCE {since})")
+        if status != "OK":
+            return
+        for uid in (data[0] or b"").split()[-max_messages:]:
+            status, payload = conn.fetch(uid, "(RFC822)")
+            if status != "OK" or not payload or not isinstance(payload[0], tuple):
+                continue
+            msg = message_from_bytes(payload[0][1])
+            try:
+                when = parsedate_to_datetime(msg.get("Date", ""))
+            except Exception:
+                when = None
+            yield {
+                "sender": (parseaddr(msg.get("From", ""))[1] or "").lower(),
+                "subject": _decode_header(msg.get("Subject", "")).strip(),
+                "body": _message_text(msg),
+                "date": when,
+                "message_id": (msg.get("Message-ID") or "").strip("<> "),
+                "uid": uid.decode(errors="replace"),
+            }
+    finally:
+        try:
+            conn.logout()
+        except Exception:
+            pass
+
+
+def fetch_email(host: str, user: str, password: str, mailbox: str = "INBOX",
+                since_days: int = 3, include_senders: list[str] | None = None,
+                exclude_senders: list[str] | None = None,
+                max_messages: int = 60, max_chars: int = 6000) -> list[dict]:
+    """
+    Postings that arrived by email: recruiter outreach and job alerts.
+
+    This is the one source that finds roles no board exposes -- a recruiter
+    writing to you directly is not listed anywhere. Read-only: the mailbox is
+    opened with readonly=True, so nothing is marked read, moved, or deleted.
+
+    Needs an app password, not your account password (Google requires 2FA,
+    then myaccount.google.com/apppasswords). Restrict include_senders to the
+    addresses worth reading; the default pulls your whole inbox.
+
+    NOTE: message bodies are untrusted text written by strangers. They are
+    treated as posting descriptions and nothing else -- never as instructions.
+    """
+    include = [s.lower() for s in (include_senders or [])]
+    exclude = [s.lower() for s in (exclude_senders or [])]
+    results: list[dict] = []
+
+    for m in imap_messages(host, user, password, mailbox, since_days, max_messages):
+        sender, subject, body = m["sender"], m["subject"], m["body"]
+        if any(x in sender for x in exclude):
+            continue
+        if include and not any(x in sender for x in include):
+            continue
+        if not subject and not body:
+            continue
+
+        company, title = "", subject
+        parsed = ALERT_HIRING.match(subject)
+        if parsed:
+            company, title = parsed.group(1).strip(), parsed.group(2).strip()
+        else:
+            parsed = ALERT_AT.match(subject)
+            if parsed:
+                title, company = parsed.group(1).strip(), parsed.group(2).strip()
+        if not company:
+            # recruiter mail rarely names the employer in the subject
+            company = sender.split("@")[-1].split(".")[0] or "email"
+
+        links = [u for u in URL_IN_TEXT.findall(body) if REAL_BOARD.search(u)]
+        url = links[0] if links else f"imap://{m['message_id'] or m['uid']}"
+
+        results.append({
+            "source": "email",
+            "company": company[:80],
+            "title": title[:140],
+            "location": "",          # rarely stated; see collect_all_postings
+            "url": url,
+            "description_html": f"From: {sender}\nSubject: {subject}\n\n{body[:max_chars]}",
+            "posting_id": hashlib.sha1(
+                (m["message_id"] or subject + sender).encode()).hexdigest()[:12],
+        })
+
+    return results
+
+
 def _title_matches(title: str, keywords_lower: list[str]) -> bool:
     return any(k in title.lower() for k in keywords_lower)
 
@@ -446,12 +735,28 @@ def _location_matches(loc: str, locations_lower: list[str]) -> bool:
     return False
 
 
-def keyword_filter(jobs: list[dict], keywords: list[str], locations: list[str]) -> list[dict]:
+def _title_excluded(title: str, excludes_lower: list[str]) -> bool:
+    """
+    Drop junior and unrelated roles that broad stems drag in.
+
+    Phrase-level on purpose. A bare "associate" would delete every Associate
+    Director posting, which is a real target level, and a bare "specialist"
+    would delete senior specialist roles. Match the whole phrase that makes a
+    title junior, not the word that merely appears in one.
+    """
+    return any(x in title.lower() for x in excludes_lower)
+
+
+def keyword_filter(jobs: list[dict], keywords: list[str], locations: list[str],
+                   exclude_titles: list[str] | None = None) -> list[dict]:
     keywords_lower = [k.lower() for k in keywords]
     locations_lower = [l.lower() for l in locations] if locations else []
+    excludes_lower = [x.lower() for x in (exclude_titles or [])]
 
     def matches(job):
         if not _title_matches(job["title"], keywords_lower):
+            return False
+        if excludes_lower and _title_excluded(job["title"], excludes_lower):
             return False
         if not locations_lower:
             return True
@@ -572,6 +877,52 @@ def collect_all_postings() -> list[dict]:
             except Exception as e:
                 print(f"[warn] company_watchlist failed: {e}")
 
+    apify_cfg = cfg.get("apify_linkedin") or {}
+    if apify_cfg.get("enabled") and apify_cfg.get("searches"):
+        token = os.environ.get("APIFY_TOKEN")
+        if not token:
+            print("[warn] apify_linkedin needs APIFY_TOKEN -- skipping")
+        else:
+            try:
+                hits = fetch_apify_linkedin(
+                    token,
+                    apify_cfg.get("actor", "valig/linkedin-jobs-scraper"),
+                    apify_cfg["searches"],
+                    date_posted=apify_cfg.get("date_posted", ""),
+                    limit_per_search=apify_cfg.get("limit_per_search", 25),
+                    # bills per result, so filter at the actor rather than here
+                    title_include=(apify_cfg.get("title_include")
+                                   or cfg.get("title_keywords") or []),
+                    title_exclude=(apify_cfg.get("title_exclude")
+                                   or cfg.get("exclude_title_keywords") or []),
+                )
+                print(f"  linkedin (apify): {len(hits)} posting(s) across "
+                      f"{len(apify_cfg['searches'])} search(es)")
+                all_jobs.extend(hits)
+            except Exception as e:
+                print(f"[warn] apify_linkedin failed: {type(e).__name__}: {str(e)[:110]}")
+
+    email_cfg = cfg.get("email") or {}
+    if email_cfg.get("enabled"):
+        user = os.environ.get("IMAP_USER")
+        password = os.environ.get("IMAP_APP_PASSWORD")
+        if not (user and password):
+            print("[warn] email source needs IMAP_USER and IMAP_APP_PASSWORD -- skipping")
+        else:
+            try:
+                hits = fetch_email(
+                    email_cfg.get("host", "imap.gmail.com"), user, password,
+                    mailbox=email_cfg.get("mailbox", "INBOX"),
+                    since_days=email_cfg.get("since_days", 3),
+                    include_senders=email_cfg.get("include_senders") or [],
+                    exclude_senders=email_cfg.get("exclude_senders") or [],
+                    max_messages=email_cfg.get("max_messages", 60),
+                )
+                print(f"  email: {len(hits)} message(s) from watched senders")
+                all_jobs.extend(hits)
+            except Exception as e:
+                print(f"[warn] email source failed: {type(e).__name__}: {str(e)[:90]}")
+
     excluded = [re.sub(r"[^a-z0-9]", "", c.lower())
                 for c in (cfg.get("exclude_companies") or [])]
     if excluded:
@@ -592,7 +943,78 @@ def collect_all_postings() -> list[dict]:
         seen.add(key)
         deduped.append(job)
 
-    filtered = keyword_filter(deduped, cfg.get("title_keywords", []), cfg.get("locations", []))
+    # Email postings were addressed to you personally and almost never state a
+    # location in the subject line, so the location filter would drop every one
+    # of them. They still go through title_keywords, which is the cost control.
+    emails = [j for j in deduped if j.get("source") == "email"]
+    linkedin = [j for j in deduped if j.get("source") == "linkedin"]
+    others = [j for j in deduped
+              if j.get("source") not in ("email", "linkedin")]
+
+    excl = cfg.get("exclude_title_keywords") or []
+    filtered = keyword_filter(others, cfg.get("title_keywords", []),
+                              cfg.get("locations", []), excl)
+    if excl:
+        without = keyword_filter(others, cfg.get("title_keywords", []),
+                                 cfg.get("locations", []))
+        dropped = len(without) - len(filtered)
+        if dropped:
+            print(f"  excluded {dropped} junior/unrelated title(s) "
+                  f"from {len(excl)} exclusion term(s)")
+
+    if emails:
+        kw = [k.lower() for k in (cfg.get("title_keywords") or [])]
+        ex = [x.lower() for x in excl]
+        kept = [j for j in emails
+                if (not kw or _title_matches(j.get("title", ""), kw))
+                and not (ex and _title_excluded(j.get("title", ""), ex))]
+        if kept:
+            print(f"  email: {len(kept)} of {len(emails)} message(s) look like relevant roles")
+        filtered.extend(kept)
+
+    if linkedin:
+        # LinkedIn labels a remote or nationwide posting "United States"
+        # rather than "Remote" -- the plain location filter rejects exactly
+        # the postings worth having, after they've already been paid for.
+        # Treat a whole-country location as remote-compatible and let the
+        # scorer judge; it evaluates location fit anyway.
+        locs = [l.lower() for l in (cfg.get("locations") or [])]
+        nationwide = ("united states", "usa", "u.s.", "nationwide", "anywhere")
+
+        def wanted(job):
+            loc = (job.get("location") or "").lower()
+            if not locs:
+                return True
+            # "VP, Marketing Data Strategy (Remote)" carried a Wilmington, DE
+            # location and was dropped as out-of-area. When the title says
+            # remote, believe the title.
+            if "remote" in (job.get("title") or "").lower():
+                return True
+            return (_location_matches(loc, locs)
+                    or any(n in loc for n in nationwide))
+
+        kept = [j for j in keyword_filter(linkedin, cfg.get("title_keywords", []),
+                                          [], excl) if wanted(j)]
+
+        # LinkedIn lists one posting per city, so a single remote role arrives
+        # four times with four different job ids. The global dedupe keys on
+        # posting_id and lets them all through, which means paying to score the
+        # same job repeatedly. Keep the first of each company+title.
+        seen_roles, unique = set(), []
+        for j in kept:
+            key = ((j.get("company") or "").strip().lower(),
+                   (j.get("title") or "").strip().lower())
+            if key in seen_roles:
+                continue
+            seen_roles.add(key)
+            unique.append(j)
+
+        dupes = len(kept) - len(unique)
+        print(f"  linkedin: {len(unique)} of {len(linkedin)} posting(s) kept "
+              f"after title and location filters"
+              + (f" ({dupes} same role in another city)" if dupes else ""))
+        filtered.extend(unique)
+
     return filtered
 
 

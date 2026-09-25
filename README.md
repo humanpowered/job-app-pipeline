@@ -36,6 +36,7 @@ The prompt still carries the instruction. The lint is what makes it binding.
 | `order_experience` | work history out of reverse-chronological order; company names carrying internal descriptors |
 | `fit_to_two_pages` | resumes that would spill past two pages |
 | `normalize_skills` | skills formatting drifting between documents |
+| `exclude_title_keywords` | junior and unrelated roles the broad keyword stems drag in, filtered before anything reaches the scorer |
 
 Each of these exists because of a specific failure that reached a finished
 document. A few worth naming:
@@ -79,9 +80,11 @@ work you already believe in.
 ## Architecture
 
 ```
-scraper.py           10 job sources (Greenhouse, Lever, Ashby, SmartRecruiters,
-                     Workday, Jooble, Adzuna, Remotive, Jobicy, a watchlist),
-                     plus schema.org JobPosting extraction for arbitrary URLs
+scraper.py           12 job sources (Greenhouse, Lever, Ashby, SmartRecruiters,
+                     Workday, Jooble, Adzuna, Remotive, Jobicy, a company
+                     watchlist, LinkedIn via a paid Apify actor, and your own
+                     mailbox), plus schema.org JobPosting extraction for
+                     arbitrary URLs
         |
 score_and_tailor.py  scores fit 0-10, then drafts resume + cover letter,
                      with the lint/retry loop above
@@ -90,11 +93,69 @@ render_*.js          docx rendering (keepNext/keepLines for widow control)
         |
 build_tracker.py     CSV tracker; generated columns refresh, your columns
                      are never overwritten
+        |
+check_replies.py     reads employer replies out of the mailbox and advances
+                     the tracker (see below)
+        |
 build_digest.py      morning summary of what ran overnight
 ```
 
 Python for the pipeline, Node for document rendering, Anthropic's API for
 scoring and drafting.
+
+Two sources are worth calling out. **Your mailbox** is the only one that finds
+roles no board lists, because a recruiter writing to you directly is not
+posted anywhere. **LinkedIn** has no public jobs API and its terms forbid
+scraping, so nothing here touches it; a paid third-party actor does, billed per
+result, which is why the title filters are pushed to the actor rather than
+applied after the results arrive.
+
+## Failures are loud, or they are not failures
+
+Every source is wrapped so one dead board cannot take down a run. That
+isolation once swallowed something it should not have: a missing API key made
+every posting fail, each failure was caught by the per-posting handler, and the
+log still ended with `[OK] pipeline completed`. Scoring was dead for three days
+before anyone noticed.
+
+Two rules came out of it. An authentication failure is fatal for the whole run,
+never a per-posting problem, and the run checks for a usable credential before
+it starts rather than discovering the problem 200 postings in. A run that could
+not do its job exits non-zero and says why.
+
+The same applies to what the log itself contains. Adzuna passes credentials as
+URL query parameters, and the default HTTP error message includes the whole
+URL, so every timeout wrote an API key in plaintext to disk. Errors now report
+the status and the query, never the URL.
+
+## Reading replies back out of the mailbox
+
+A tracker only knows what you typed into it, so an application sits at
+"applied" long after the company has answered. Three rejections and one
+scheduled interview were sitting unread in one inbox while the morning brief
+called them all "gone quiet".
+
+`check_replies.py` runs after the pipeline, searches the mailbox server-side
+for reply-shaped mail, classifies each message as rejected / interview /
+acknowledged, matches it to an application, and advances the tracker. It opens
+the mailbox read-only: nothing is marked read, moved, or deleted, and it never
+sends anything.
+
+Matching is the part that has to be right, because a wrong rejection is worse
+than no automation at all. Three rules, each of which exists because the naive
+version got it wrong on real mail:
+
+- **The employer must be named** in the message or the sender. Scoring on title
+  alone matched a Jack Morton rejection to the OnePay application, because half
+  these roles are called "Director, Marketing Analytics".
+- **Job boards are not employers.** A LinkedIn posting URL made "linkedin" an
+  employer key, and that word sits in the footer of most email.
+- **Ties are reported, not applied.** Two applications at the same company both
+  match its rejection mail; closing the wrong one is worse than closing
+  neither.
+
+Your own edits are safe: a status you typed is never overwritten, and nothing
+moves backwards from interview or offer.
 
 ## The profile is two files, and the skills file wins
 
@@ -148,9 +209,13 @@ minutes. Browser extensions built for this already do it better.
 ```bash
 pip install -r requirements.txt
 cd src && npm install
-export ANTHROPIC_API_KEY=...        # required
+export ANTHROPIC_API_KEY=...        # required (or sign in with `ant auth login`)
 export JOOBLE_API_KEY=...           # optional, aggregator sources
 export ADZUNA_APP_ID=... ADZUNA_APP_KEY=...
+export APIFY_TOKEN=...              # optional, LinkedIn via the Apify actor
+export IMAP_USER=... IMAP_APP_PASSWORD=...   # optional, mailbox source + reply
+                                             # checking. Use an app password,
+                                             # never your account password.
 ```
 
 Copy the examples and fill them in:

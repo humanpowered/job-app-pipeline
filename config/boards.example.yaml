@@ -77,6 +77,28 @@ jobicy:
     - data-science
     - marketing
 
+# Email -- postings that arrived in your inbox. The only source that surfaces
+# roles no board lists, because a recruiter writing to you directly is not
+# posted anywhere. Opened read-only: nothing is marked read, moved, or deleted.
+# Needs an app password (Google: turn on 2FA, then
+# myaccount.google.com/apppasswords) in IMAP_USER / IMAP_APP_PASSWORD.
+# Never put credentials in this file.
+email:
+  enabled: false
+  host: imap.gmail.com
+  mailbox: INBOX
+  since_days: 3
+  max_messages: 60
+  # Empty means every recent message is considered, which is how outreach from
+  # an unknown recruiter gets found; subjects still have to match
+  # title_keywords before anything is scored. Narrow it to specific addresses
+  # to only ever read known senders.
+  include_senders: []
+  # Digests from sources this pipeline already queries directly.
+  exclude_senders:
+    - jooble.org
+    - experteer.com
+
 # Employers to watch regardless of which ATS they run. Some sit on systems
 # with no public feed, so this searches by company name and keeps only hits
 # whose company field matches. Needs JOOBLE_API_KEY.
@@ -94,14 +116,39 @@ exclude_companies:
 
 # Cheap string filter applied before any posting reaches the scorer, so the
 # LLM only sees plausible roles. This is the main cost control.
+#
+# These are substring matches, so prefer stems over full titles: "marketing
+# analytics" already catches "Director, Marketing Analytics" and "Senior
+# Manager, Marketing Analytics". Mind the word boundaries a stem implies --
+# "data science" does NOT match "Data Scientist", which is why the stem below
+# is "data scien".
 title_keywords:
   - "marketing analytics"
-  - "marketing science"
+  - "marketing scien"        # Marketing Science(s) / Marketing Scientist
   - "marketing measurement"
-  - "marketing data science"
+  - "data scien"             # Data Science(s) / Data Scientist
+  - "measurement"
+  - "incrementality"
+  - "experimentation"
   - "director, analytics"
   - "head of analytics"
   - "attribution"
+
+# Titles to drop even when they match a keyword above, so broad stems don't
+# flood the scorer with junior roles.
+#
+# Phrase-level on purpose: a bare "associate" would also delete Associate
+# Director postings, and a bare "specialist" would delete senior specialist
+# roles. Exclude the phrase that makes a title junior, not a word that happens
+# to appear in one.
+exclude_title_keywords:
+  - "intern"
+  - "coordinator"
+  - "junior "
+  - "entry level"
+  - "research associate"
+  - "senior associate"
+  - "analyst i"
 
 # Leave empty to accept everything, including remote.
 locations:

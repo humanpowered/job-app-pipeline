@@ -64,10 +64,20 @@ def main():
     ran_at = next((ln for ln in log_lines if re.match(r"\d{4}-\d{2}-\d{2} \d{2}:", ln)), "")
     found = next((ln.strip() for ln in log_lines if "postings matching" in ln), "")
     errors = [ln for ln in log_lines if "[ERROR]" in ln or "[warn]" in ln or "FAILED" in ln]
-    ok = any("[OK]" in ln for ln in log_lines)
 
-    # newly scored this run: lines like "[8/10] Title @ company"
-    scored_now = [ln.strip() for ln in log_lines if re.match(r"\[\d+/10\]", ln.strip())]
+    # run_nightly.cmd appends [OK]/[ERROR] *after* this script runs, so that
+    # verdict is never in the log yet. Judge the run by its own markers: the
+    # pipeline's closing line, and the absence of anything fatal.
+    finished = any(ln.startswith("Done. Review output") for ln in log_lines)
+    fatal = any("[FATAL]" in ln or "[ERROR]" in ln or ln.startswith("Traceback")
+                for ln in log_lines)
+    ok = finished and not fatal
+
+    # Newly scored this run: scoring prints "[8/10] Title @ company" at column
+    # zero. The tracker's own READY TO APPLY report prints "   [7/10] company
+    # - title" indented, so matching on the stripped line counted every ready
+    # posting as newly scored. Match the raw line instead.
+    scored_now = [ln.strip() for ln in log_lines if re.match(r"\[\d+/10\]", ln)]
 
     def has_docs(r):
         return bool(r.get("resume"))
@@ -107,6 +117,32 @@ def main():
         for e in errors[:5]:
             L.append(f"    - `{e.strip()[:110]}`")
     L.append("")
+
+    # replies the mailbox turned up since the last run
+    replies = {}
+    replies_path = OUTPUT_DIR / "replies.json"
+    if replies_path.exists():
+        try:
+            replies = json.loads(replies_path.read_text(encoding="utf-8"))
+        except Exception:
+            replies = {}
+    changes = replies.get("changes") or []
+    unsure = replies.get("unsure") or []
+    if changes or unsure:
+        L.append(f"## Replies from employers ({len(changes)})")
+        for c in changes:
+            L.append(f"- **{c['to'].upper()}** — {c.get('company','')} — {c.get('title','')}"
+                     f"  ({c.get('date','')})")
+            L.append(f"    - \"{c.get('subject','')}\" from {c.get('sender','')}")
+        if unsure:
+            L.append("")
+            L.append(f"Needs your eye ({len(unsure)}) — matched an application but "
+                     f"not confidently enough to change it:")
+            for u in unsure:
+                L.append(f"- {u.get('verdict','?')} — {u.get('company','')} — "
+                         f"{u.get('title','')} ({u.get('reason','')})")
+                L.append(f"    - \"{u.get('subject','')}\" from {u.get('sender','')}")
+        L.append("")
 
     L.append(f"## Ready to apply ({len(ready)})")
     if ready:
