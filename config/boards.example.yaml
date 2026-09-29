@@ -77,6 +77,46 @@ jobicy:
     - data-science
     - marketing
 
+# LinkedIn and Indeed, each through a paid Apify actor. Both sites forbid
+# scraping in their terms, so a third party does the collecting and bills per
+# result. These are the only sources that cost money, which is why both ship
+# disabled and why `doctor --dry-run` leaves them out unless you pass
+# --include-paid. Set APIFY_TOKEN; never put it in this file.
+#
+# Filter as much as you can inside the request. A result you receive and then
+# discard has already been paid for.
+apify_linkedin:
+  enabled: false
+  actor: "valig/linkedin-jobs-scraper"
+  date_posted: "r86400"       # last 24h; r604800 = week, r2592000 = month
+  limit_per_search: 25
+  # Tested: titleInclude and titleExclude are applied before billing, so
+  # seniority belongs there. LinkedIn's own remote filter does NOT work -- a
+  # location of "Remote" returned jobs in India. Put "remote" in the keywords
+  # instead; LinkedIn then labels those postings "United States", which
+  # collect_all_postings treats as remote-friendly.
+  searches:
+    - keywords: "remote marketing analytics"
+      location: "United States"
+  title_include: ["director", "head of", "vp", "senior manager"]
+  title_exclude: ["intern", "coordinator", "entry level"]
+
+apify_indeed:
+  enabled: false
+  actor: "valig/indeed-jobs-scraper"
+  country: "us"               # lowercase; "US" is rejected with a 400
+  date_posted: "1"            # days
+  limit_per_search: 15
+  # This actor has no title filter of its own, and a plain query matches the
+  # body of a posting rather than its title -- "director marketing analytics"
+  # returned Revenue Operations and Paid Search roles, and 1 billed result in 5
+  # survived the title filter. Indeed's own query syntax does pass through,
+  # including nested booleans, so put the whole filter in the query. Unlike
+  # LinkedIn, location "remote" works here.
+  searches:
+    - title: 'title:(("marketing analytics" OR "marketing measurement") AND (director OR "head of" OR VP))'
+      location: "remote"
+
 # Email -- postings that arrived in your inbox. The only source that surfaces
 # roles no board lists, because a recruiter writing to you directly is not
 # posted anywhere. Opened read-only: nothing is marked read, moved, or deleted.

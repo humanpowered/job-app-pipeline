@@ -89,7 +89,7 @@ flowchart TD
     B1["Company boards<br/>Greenhouse · Lever · Ashby<br/>SmartRecruiters · Workday"]
     B2["Aggregators<br/>Jooble · Adzuna · Remotive · Jobicy"]
     B3["Company watchlist"]
-    B4["LinkedIn<br/>paid Apify actor"]
+    B4["LinkedIn · Indeed<br/>paid Apify actors"]
     B5["Your mailbox<br/>IMAP, read-only"]
   end
 
@@ -144,10 +144,20 @@ the submit date yourself.
 
 Two sources are worth calling out. **Your mailbox** is the only one that finds
 roles no board lists, because a recruiter writing to you directly is not
-posted anywhere. **LinkedIn** has no public jobs API and its terms forbid
-scraping, so nothing here touches it; a paid third-party actor does, billed per
-result, which is why the title filters are pushed to the actor rather than
-applied after the results arrive.
+posted anywhere. **LinkedIn and Indeed** have no usable public API and their
+terms forbid scraping, so nothing here touches them; paid third-party actors
+do, billed per result. That bill is why the filtering is pushed into the
+request rather than applied to the response: a result you receive and then
+discard has already been paid for. LinkedIn takes explicit title filters.
+Indeed takes none, but passes its own query syntax through, so the filter goes
+in the query — `title:(("marketing analytics") AND (director OR "head of"))`.
+Filtering after the fact instead cost four wasted results in every five.
+
+Neither actor's documentation describes what it returns accurately, so both
+were probed for a few cents before either was wired in, and what the probes
+found is written down in `boards.example.yaml` next to the settings it
+explains. Two filters that look identical across the two sites behave in
+opposite ways: Indeed's remote filter works and LinkedIn's does nothing.
 
 ## Failures are loud, or they are not failures
 
@@ -240,8 +250,13 @@ python src/doctor.py --dry-run  # also scrape the free sources and count
 It makes no API calls and writes nothing. The dry run reports how many
 postings survive your filters and how many have never been scored, so you can
 see what a real run would cost before spending anything. It skips the paid
-LinkedIn source unless you pass `--include-paid`, because a diagnostic that
-bills per result is a bad diagnostic.
+LinkedIn and Indeed sources unless you pass `--include-paid`, because a
+diagnostic that bills per result is a bad diagnostic.
+
+It also reports a credential that is set for your user account but missing from
+the shell doctor is running in, rather than calling it absent. Some parents
+strip variables from what they hand to child processes, and "you have no API
+key" is the wrong thing to tell someone whose scheduled run is using one.
 
 Exit code 1 means something is actually broken, so a wrapper can tell
 "misconfigured" from "nothing to do".
@@ -301,7 +316,9 @@ cd src && npm install
 export ANTHROPIC_API_KEY=...        # required (or sign in with `ant auth login`)
 export JOOBLE_API_KEY=...           # optional, aggregator sources
 export ADZUNA_APP_ID=... ADZUNA_APP_KEY=...
-export APIFY_TOKEN=...              # optional, LinkedIn via the Apify actor
+export APIFY_TOKEN=...              # optional, LinkedIn + Indeed via Apify
+                                    # actors. These bill per result; both ship
+                                    # disabled in boards.example.yaml.
 export IMAP_USER=... IMAP_APP_PASSWORD=...   # optional, mailbox source + reply
                                              # checking. Use an app password,
                                              # never your account password.

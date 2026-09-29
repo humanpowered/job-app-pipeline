@@ -512,6 +512,112 @@ def fetch_apify_linkedin(token: str, actor: str, searches: list[dict],
     return results
 
 
+def _indeed_pay_range(pay) -> tuple[int, int, str] | None:
+    """
+    Pull (low, high, unit) out of an Indeed baseSalary, whose shape varies.
+
+    Most postings give flat min/max, but some nest them schema.org style under
+    value/minValue/maxValue. The flat reading crashed on the nested form, so
+    read both and give up quietly rather than guessing.
+    """
+    if not isinstance(pay, dict):
+        return None
+    inner = pay.get("value") if isinstance(pay.get("value"), dict) else pay
+    low = inner.get("min", inner.get("minValue"))
+    high = inner.get("max", inner.get("maxValue"))
+    unit = (inner.get("unitOfWork") or inner.get("unitText")
+            or pay.get("unitOfWork") or "YEAR")
+    if not isinstance(low, (int, float)) or not isinstance(high, (int, float)):
+        return None
+    return int(low), int(high), str(unit).lower()
+
+
+def fetch_apify_indeed(token: str, actor: str, searches: list[dict],
+                       country: str = "us", date_posted: str = "",
+                       limit_per_search: int = 25) -> list[dict]:
+    """
+    Indeed postings by way of a paid Apify actor, on the same terms as
+    LinkedIn: Indeed's own terms forbid scraping, so a third party does it and
+    bills per result.
+
+    Three things differ from the LinkedIn actor, all established by probing it
+    rather than from its documentation, which names none of these fields:
+
+      - location "remote" actually filters to remote roles, and datePosted
+        actually narrows the window. Neither worked on LinkedIn.
+      - there is no titleInclude, so whatever comes back is billed. What takes
+        its place is Indeed's own query syntax, which passes through: a title
+        term of title:((phrase OR phrase) AND (director OR head)) filters at
+        the actor, before billing. A plain query matches posting bodies, so it
+        billed four irrelevant results for every good one. See boards.yaml.
+      - country must be lowercase; "US" is rejected with a 400.
+
+    Shapes: employer and location are objects, description is {text, html},
+    salary arrives as a structured baseSalary, and jobUrl points at the
+    employer's own ATS while url points back at Indeed.
+    """
+    endpoint = (f"https://api.apify.com/v2/acts/{actor.replace('/', '~')}"
+                f"/run-sync-get-dataset-items")
+    results = []
+
+    for search in searches:
+        payload = {"country": country,
+                   "limit": search.get("limit", limit_per_search)}
+        if search.get("title"):
+            payload["title"] = search["title"]
+        if search.get("location"):
+            payload["location"] = search["location"]
+        if date_posted:
+            payload["datePosted"] = str(date_posted)
+
+        label = f"{search.get('title','')} / {search.get('location','anywhere')}"
+        resp = requests.post(endpoint, json=payload,
+                             headers={"Authorization": f"Bearer {token}"},
+                             timeout=310)
+        if resp.status_code >= 400:
+            raise RuntimeError(f"Apify returned {resp.status_code} for Indeed "
+                               f"search {label!r}: {resp.text[:120]}")
+
+        for j in resp.json():
+            loc = j.get("location") or {}
+            city = (loc.get("city") or "").strip()
+            state = (loc.get("admin1Code") or "").strip()
+            where = city if city.lower() == "remote" else ", ".join(p for p in (city, state) if p)
+
+            # description is an object of {text, html}, not a string
+            desc = j.get("description")
+            if isinstance(desc, dict):
+                description = desc.get("html") or desc.get("text") or ""
+            else:
+                description = desc or ""
+
+            pay = _indeed_pay_range(j.get("baseSalary"))
+            if pay:
+                # the scorer reads pay ranges out of the description text, and
+                # it needs the unit: it discards a range followed by "per hour"
+                # and would otherwise read $50-$65 as $50K-$65K
+                low, high, unit = pay
+                description = (f"Salary: ${low:,} - ${high:,} per {unit}\n\n"
+                               + description)
+
+            key = str(j.get("key") or j.get("refNum") or "")
+            results.append({
+                "source": "indeed",
+                "company": (j.get("employer") or {}).get("name", ""),
+                "title": j.get("title", ""),
+                "location": where or (loc.get("countryName") or ""),
+                # jobUrl is the employer's own posting; prefer it so an apply
+                # link is real and so a posting already pulled from that ATS
+                # can dedupe against it
+                "url": j.get("jobUrl") or j.get("url") or "",
+                "description_html": description,
+                "posting_id": key or hashlib.sha1(
+                    (j.get("url") or j.get("title", "")).encode()).hexdigest()[:12],
+            })
+
+    return results
+
+
 HTML_TAG = re.compile(r"<[^>]+>")
 URL_IN_TEXT = re.compile(r"https?://[^\s\"'>)\]]+")
 # Boards worth linking to when an email mentions one. LinkedIn alert links are
@@ -950,6 +1056,27 @@ def collect_all_postings() -> list[dict]:
             except Exception as e:
                 print(f"[warn] apify_linkedin failed: {type(e).__name__}: {str(e)[:110]}")
 
+    indeed_cfg = cfg.get("apify_indeed") or {}
+    if indeed_cfg.get("enabled") and indeed_cfg.get("searches"):
+        token = os.environ.get("APIFY_TOKEN")
+        if not token:
+            print("[warn] apify_indeed needs APIFY_TOKEN -- skipping")
+        else:
+            try:
+                hits = fetch_apify_indeed(
+                    token,
+                    indeed_cfg.get("actor", "valig/indeed-jobs-scraper"),
+                    indeed_cfg["searches"],
+                    country=indeed_cfg.get("country", "us"),
+                    date_posted=indeed_cfg.get("date_posted", ""),
+                    limit_per_search=indeed_cfg.get("limit_per_search", 25),
+                )
+                print(f"  indeed (apify): {len(hits)} posting(s) across "
+                      f"{len(indeed_cfg['searches'])} search(es)")
+                all_jobs.extend(hits)
+            except Exception as e:
+                print(f"[warn] apify_indeed failed: {type(e).__name__}: {str(e)[:110]}")
+
     email_cfg = cfg.get("email") or {}
     if email_cfg.get("enabled"):
         user = os.environ.get("IMAP_USER")
@@ -996,8 +1123,9 @@ def collect_all_postings() -> list[dict]:
     # of them. They still go through title_keywords, which is the cost control.
     emails = [j for j in deduped if j.get("source") == "email"]
     linkedin = [j for j in deduped if j.get("source") == "linkedin"]
+    indeed = [j for j in deduped if j.get("source") == "indeed"]
     others = [j for j in deduped
-              if j.get("source") not in ("email", "linkedin")]
+              if j.get("source") not in ("email", "linkedin", "indeed")]
 
     filtered = keyword_filter(others, title_keywords, cfg.get("locations", []),
                               exclude_titles)
@@ -1060,6 +1188,28 @@ def collect_all_postings() -> list[dict]:
         print(f"  linkedin: {len(unique)} of {len(linkedin)} posting(s) kept "
               f"after title and location filters"
               + (f" ({dupes} same role in another city)" if dupes else ""))
+        filtered.extend(unique)
+
+    if indeed:
+        # Indeed's own location filter works, so unlike LinkedIn these carry a
+        # real "Remote" or "City, ST" and the ordinary filter is correct. What
+        # it shares with LinkedIn is duplicates: the same role comes back
+        # several times under different job keys, so keep one per company+title.
+        kept = keyword_filter(indeed, title_keywords, cfg.get("locations", []),
+                              exclude_titles)
+        seen_roles, unique = set(), []
+        for j in kept:
+            key = ((j.get("company") or "").strip().lower(),
+                   (j.get("title") or "").strip().lower())
+            if key in seen_roles:
+                continue
+            seen_roles.add(key)
+            unique.append(j)
+
+        dupes = len(kept) - len(unique)
+        print(f"  indeed: {len(unique)} of {len(indeed)} posting(s) kept "
+              f"after title and location filters"
+              + (f" ({dupes} duplicate listing(s))" if dupes else ""))
         filtered.extend(unique)
 
     return filtered

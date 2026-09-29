@@ -9,7 +9,7 @@ anything on scoring.
 
   python doctor.py                 # configuration and credentials only
   python doctor.py --dry-run       # also scrape the free sources and count
-  python doctor.py --dry-run --include-paid   # also run the paid LinkedIn actor
+  python doctor.py --dry-run --include-paid   # also run the paid LinkedIn/Indeed actors
 
 Exit code is 1 when something is actually broken, so a scheduled wrapper can
 tell "misconfigured" from "nothing to do".
@@ -17,6 +17,7 @@ tell "misconfigured" from "nothing to do".
 import csv
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime
@@ -78,12 +79,37 @@ def check_runtime() -> None:
 
 # --- credentials ------------------------------------------------------------
 
+def user_env(name: str) -> str:
+    """
+    Read a Windows user environment variable, ignoring this process.
+
+    Some parents deliberately strip a variable from the environment they hand
+    to child processes -- Claude Code removes ANTHROPIC_API_KEY, for instance --
+    so os.environ says missing while the scheduled nightly run, which starts
+    from the user environment, has it. Checking the registry is what tells a
+    key that was never set apart from one this shell simply cannot see.
+    """
+    if os.name != "nt":
+        return ""
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+            value, _ = winreg.QueryValueEx(key, name)
+            return str(value or "")
+    except (OSError, ImportError):
+        return ""
+
+
 def check_credentials() -> dict:
     section("Credentials")
     have = {}
 
     anthropic_ok = bool(os.environ.get("ANTHROPIC_API_KEY")
                         or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
+    if not anthropic_ok and user_env("ANTHROPIC_API_KEY"):
+        anthropic_ok = True
+        line(OK, "ANTHROPIC_API_KEY set in your user environment",
+             "not visible to this shell, which strips it; the nightly run gets it")
     if not anthropic_ok:
         cfg_dir = os.environ.get("ANTHROPIC_CONFIG_DIR")
         base = (Path(cfg_dir) if cfg_dir
@@ -102,14 +128,21 @@ def check_credentials() -> dict:
     optional = {
         "jooble": (["JOOBLE_API_KEY"], "Jooble and the company watchlist"),
         "adzuna": (["ADZUNA_APP_ID", "ADZUNA_APP_KEY"], "the Adzuna source"),
-        "apify": (["APIFY_TOKEN"], "LinkedIn (paid, billed per result)"),
+        "apify": (["APIFY_TOKEN"], "LinkedIn and Indeed (paid, billed per result)"),
         "imap": (["IMAP_USER", "IMAP_APP_PASSWORD"], "the mailbox source and reply checking"),
     }
     for name, (vars_, what) in optional.items():
         missing = [v for v in vars_ if not os.environ.get(v)]
+        # a variable this shell cannot see may still be set for the user, and
+        # the nightly run would find it -- say which case it is
+        elsewhere = [v for v in missing if user_env(v)]
+        absent = [v for v in missing if v not in elsewhere]
         have[name] = not missing
-        if missing:
-            line(WARN, f"{', '.join(missing)} not set", f"{what} will be skipped")
+        if absent:
+            line(WARN, f"{', '.join(absent)} not set", f"{what} will be skipped")
+        elif elsewhere:
+            line(OK, f"{name} credentials set in your user environment",
+                 "not visible to this shell; the nightly run gets them")
         else:
             line(OK, f"{name} credentials set", what)
     return have
@@ -173,7 +206,7 @@ def check_config() -> dict:
         if n:
             info["sources"].append(f"{name} ({n})")
     for name in ("jooble", "adzuna", "remotive", "jobicy", "careerjet",
-                 "company_watchlist", "email", "apify_linkedin"):
+                 "company_watchlist", "email", "apify_linkedin", "apify_indeed"):
         block = cfg.get(name) or {}
         if isinstance(block, dict) and block.get("enabled"):
             info["sources"].append(name)
@@ -277,6 +310,75 @@ def check_workspace() -> None:
         line(WARN, f"last run has no verdict ({newest.name})", "it may have been interrupted")
 
 
+# --- sources that have stopped working --------------------------------------
+
+# "[warn] greenhouse/marqeta failed: 404 ..." and "[warn] jobicy failed: ..."
+WARN_TOKEN = re.compile(r"\[warn\] ([a-z_]+)/([A-Za-z0-9_\-]+) failed: (.*)")
+WARN_SOURCE = re.compile(r"\[warn\] ([a-z_]+)(?: source)? failed: (.*)")
+MIN_RUNS = 3          # one bad night is weather, three is a pattern
+
+
+def check_dead_sources(window_days: int = 7) -> None:
+    """
+    A board token that has been removed announces itself only as a [warn] line
+    that is easy to scroll past. Two died this way (marqeta, amplitude), each
+    failing every night for weeks before anyone read the warning. Flag any
+    source that failed in every run of the last week.
+    """
+    section(f"Sources failing (last {window_days} days)")
+    logs = sorted(LOGS.glob("pipeline_*.log")) if LOGS.exists() else []
+    cutoff = datetime.now().timestamp() - window_days * 86400
+    logs = [p for p in logs if p.stat().st_mtime >= cutoff]
+    if len(logs) < MIN_RUNS:
+        line(OK, f"only {len(logs)} run(s) logged", "not enough history to judge")
+        return
+
+    # Per run, newest first: which sources failed and why.
+    per_run: list[dict[str, str]] = []
+    for log in sorted(logs, key=lambda p: p.stat().st_mtime, reverse=True):
+        seen_here: dict[str, str] = {}
+        for raw in log.read_text(encoding="utf-8", errors="replace").splitlines():
+            m = WARN_TOKEN.search(raw)
+            if m:
+                seen_here[f"{m.group(1)}/{m.group(2)}"] = m.group(3)[:60]
+                continue
+            m = WARN_SOURCE.search(raw)
+            if m and "query" not in raw:
+                seen_here[m.group(1)] = m.group(2)[:60]
+        per_run.append(seen_here)
+
+    names = {n for run in per_run for n in run}
+    dead, flaky = {}, {}
+    for name in names:
+        # A token removed from a board fails from that day on, so counting
+        # across the whole window hides it behind the healthy runs that came
+        # before: it would take a full week to surface. Count the streak of
+        # consecutive most-recent runs instead, which shows it in three.
+        streak, why = 0, ""
+        for run in per_run:
+            if name not in run:
+                break
+            streak += 1
+            why = why or run[name]
+        total = sum(1 for run in per_run if name in run)
+        if streak >= MIN_RUNS:
+            dead[name] = (streak, why)
+        elif total >= MIN_RUNS:
+            flaky[name] = (total, next(r[name] for r in per_run if name in r))
+
+    for name, (streak, why) in sorted(dead.items()):
+        detail = f"failed in the last {streak} run(s): {why}"
+        if "404" in why:
+            line(FAIL, f"{name} looks dead", detail + " — remove it from boards.yaml")
+        else:
+            line(WARN, f"{name} has failed every recent run", detail)
+    for name, (total, why) in sorted(flaky.items()):
+        line(WARN, f"{name} is flaky", f"failed in {total} of {len(per_run)} run(s): {why}")
+    if not dead and not flaky:
+        line(OK, f"no source has failed {MIN_RUNS} runs running",
+             f"checked {len(per_run)} run(s)")
+
+
 # --- optional dry run -------------------------------------------------------
 
 def dry_run(info: dict, include_paid: bool) -> None:
@@ -286,14 +388,17 @@ def dry_run(info: dict, include_paid: bool) -> None:
     import yaml
 
     if not include_paid:
-        # the LinkedIn actor bills per result, so it stays out of a check
+        # the Apify actors bill per result, so they stay out of a check
         cfg_path = CONFIG / "boards.yaml"
-        original = cfg_path.read_text(encoding="utf-8")
-        cfg = yaml.safe_load(original) or {}
-        if (cfg.get("apify_linkedin") or {}).get("enabled"):
-            line(WARN, "Skipping the paid LinkedIn source",
-                 "it bills per result; add --include-paid to exercise it")
-            scraper.load_config = lambda: {**cfg, "apify_linkedin": {"enabled": False}}
+        cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+        paid = [name for name in ("apify_linkedin", "apify_indeed")
+                if (cfg.get(name) or {}).get("enabled")]
+        if paid:
+            line(WARN, f"Skipping {len(paid)} paid source(s): "
+                       + ", ".join(n.replace('apify_', '') for n in paid),
+                 "they bill per result; add --include-paid to exercise them")
+            off = {name: {"enabled": False} for name in paid}
+            scraper.load_config = lambda: {**cfg, **off}
 
     from collections import Counter
     postings = scraper.collect_all_postings()
@@ -325,6 +430,7 @@ def main() -> int:
     info = check_config()
     check_profile()
     check_workspace()
+    check_dead_sources()
 
     if "--dry-run" in sys.argv:
         if not creds.get("anthropic"):
