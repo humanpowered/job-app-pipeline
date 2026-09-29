@@ -79,29 +79,68 @@ work you already believe in.
 
 ## Architecture
 
-```
-scraper.py           12 job sources (Greenhouse, Lever, Ashby, SmartRecruiters,
-                     Workday, Jooble, Adzuna, Remotive, Jobicy, a company
-                     watchlist, LinkedIn via a paid Apify actor, and your own
-                     mailbox), plus schema.org JobPosting extraction for
-                     arbitrary URLs
-        |
-score_and_tailor.py  scores fit 0-10, then drafts resume + cover letter,
-                     with the lint/retry loop above
-        |
-render_*.js          docx rendering (keepNext/keepLines for widow control)
-        |
-build_tracker.py     CSV tracker; generated columns refresh, your columns
-                     are never overwritten
-        |
-check_replies.py     reads employer replies out of the mailbox and advances
-                     the tracker (see below)
-        |
-build_digest.py      morning summary of what ran overnight
+```mermaid
+flowchart TD
+  CRON["Task Scheduler, nightly"] --> CMD["run_nightly.cmd<br/>logs to logs/pipeline_DATE.log"]
+  CMD --> PIPE["run_pipeline.py"]
+
+  subgraph COLLECT["1 · Collect — scraper.py"]
+    direction TB
+    B1["Company boards<br/>Greenhouse · Lever · Ashby<br/>SmartRecruiters · Workday"]
+    B2["Aggregators<br/>Jooble · Adzuna · Remotive · Jobicy"]
+    B3["Company watchlist"]
+    B4["LinkedIn<br/>paid Apify actor"]
+    B5["Your mailbox<br/>IMAP, read-only"]
+  end
+
+  PIPE --> COLLECT
+  COLLECT --> FILT["Filter<br/>drop excluded companies · dedupe<br/>title keywords · junior-title exclusions · location"]
+
+  FILT --> SEEN{"Already<br/>scored?"}
+  SEEN -->|yes| SKIP["Skip — no API call"]
+  SEEN -->|no| CRED{"Credentials<br/>present?"}
+  CRED -->|no| FATAL["FATAL · exit non-zero<br/>log ends [ERROR]"]
+  CRED -->|yes| SCORE["score_posting → 0-10<br/>parses pay range, salary floor"]
+
+  SCORE --> THRESH{"Score ≥ 6?"}
+  THRESH -->|no| RECORD["Record score and reasoning only"]
+  THRESH -->|yes| DRAFT["tailor_resume + draft_cover_letter<br/>reverse-chronological · skills normalized · two-page fit"]
+
+  DRAFT --> LINT{"Lint clean?"}
+  LINT -->|"AI tells · ungrounded claims · structure"| RETRY["Retry, violations named"]
+  RETRY --> DRAFT
+  LINT -->|clean| RENDER["render_resume.js<br/>render_cover_letter.js → .docx"]
+
+  RENDER --> TRACK["build_tracker.py<br/>generated columns refresh,<br/>your columns never overwritten"]
+  RECORD --> TRACK
+  SKIP --> TRACK
+
+  TRACK --> REPLY["check_replies.py<br/>reads employer replies, read-only"]
+  REPLY --> MATCH{"Employer named<br/>and match clear?"}
+  MATCH -->|yes| ADVANCE["Advance status<br/>rejected · interview · acknowledged"]
+  MATCH -->|"tie or weak"| FLAG["Report for review"]
+
+  ADVANCE --> DIGEST["build_digest.py → MORNING_BRIEF.md"]
+  FLAG --> DIGEST
+
+  subgraph HUMAN["You, in the morning"]
+    direction TB
+    H1["Read the brief"] --> H2["Review the .docx"]
+    H2 --> H3["Apply on the employer's site"]
+    H3 --> H4["Record the submit date"]
+  end
+
+  DIGEST --> HUMAN
+  H4 -.-> TRACK
 ```
 
 Python for the pipeline, Node for document rendering, Anthropic's API for
-scoring and drafting.
+scoring and drafting. `scraper.py` also does schema.org JobPosting extraction
+for arbitrary URLs, so a posting someone sends you can be scored without
+belonging to any source above.
+
+The dotted line is the part that matters: the loop only closes when you type
+the submit date yourself.
 
 Two sources are worth calling out. **Your mailbox** is the only one that finds
 roles no board lists, because a recruiter writing to you directly is not
