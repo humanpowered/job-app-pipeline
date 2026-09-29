@@ -665,6 +665,27 @@ def fetch_email(host: str, user: str, password: str, mailbox: str = "INBOX",
     exclude = [s.lower() for s in (exclude_senders or [])]
     results: list[dict] = []
 
+    # A reply about an application you already sent is not a new opening. The
+    # NewRez interview invitation arrived here as an 8/10 "role" on
+    # 2026-09-29, because its subject matched the title keywords. Reuse the
+    # reply checker's own classifier and matcher rather than a second set of
+    # phrases: skipping on the classifier alone would drop a recruiter asking
+    # for your availability about a genuinely new job, so a message is only
+    # dropped when it also ties to an application in the tracker.
+    from check_replies import classify as classify_reply, match_row, parse_date
+    tracker = Path(__file__).parent.parent / "output" / "application_tracker.csv"
+    applied_rows: list[dict] = []
+    if tracker.exists():
+        try:
+            import csv as _csv
+            with open(tracker, newline="", encoding="utf-8-sig") as f:
+                applied_rows = [r for r in _csv.DictReader(f)
+                                if parse_date(r.get("date_submitted", ""))]
+        except Exception as exc:
+            print(f"  [warn] could not read the tracker to filter replies: "
+                  f"{type(exc).__name__}")
+    replies_skipped = 0
+
     for m in imap_messages(host, user, password, mailbox, since_days, max_messages):
         sender, subject, body = m["sender"], m["subject"], m["body"]
         if any(x in sender for x in exclude):
@@ -673,6 +694,20 @@ def fetch_email(host: str, user: str, password: str, mailbox: str = "INBOX",
             continue
         if not subject and not body:
             continue
+
+        # Judge this on the subject alone. A reply announces itself there
+        # ("Your application to...", "Newrez Interview | ..."), while a real
+        # posting mentions interviews and availability in its description: a
+        # new Instacart opening was skipped as a reply because its body said
+        # "our interview process has four stages" and an Instacart application
+        # was already on file.
+        looks_like_reply = (classify_reply(subject, "")
+                            or re.search(r"\binterview\b", subject, re.I))
+        if applied_rows and looks_like_reply:
+            _row, score, _runner = match_row(m, applied_rows)
+            if score >= 5:
+                replies_skipped += 1
+                continue
 
         company, title = "", subject
         parsed = ALERT_HIRING.match(subject)
@@ -700,6 +735,9 @@ def fetch_email(host: str, user: str, password: str, mailbox: str = "INBOX",
                 (m["message_id"] or subject + sender).encode()).hexdigest()[:12],
         })
 
+    if replies_skipped:
+        print(f"  email: skipped {replies_skipped} message(s) that are replies "
+              f"about applications you already sent")
     return results
 
 
