@@ -1,0 +1,24 @@
+# Thresholds and limits. Copy to tuning.yaml, or leave it absent to use these
+# same values as built-in defaults. Delete any single line to fall back to its
+# default. A typo'd key stops the run rather than being silently ignored.
+
+model: claude-sonnet-5
+
+# Scoring
+score_threshold: 6        # 0-10. Documents are drafted at or above this.
+salary_floor: 160000      # At or above, overqualification is not held against a role.
+
+# Resume shape. The two-page fit trims toward these; it does not pad up to them.
+max_resume_words: 900
+max_summary_words: 80
+bullets_by_position: [6, 6, 3, 3, 5, 3]   # per role, newest first
+bullets_tail: 2                            # roles beyond that list
+max_skill_categories: 5
+max_terms_per_category: 10
+
+# Cover letter lint. The prompt targets ~210 words; the ceiling carries slack
+# so a good letter doesn't fail over a couple of words.
+max_letter_words: 265
+max_sentence_words: 38
+max_bullet_words: 42      # past this a bullet reads as prose
+min_groups: 3             # achievement groups in the letter

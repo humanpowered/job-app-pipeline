@@ -19,8 +19,13 @@ PROFILE_PATH = PROFILE_DIR / "master_profile.json"
 SKILLS_CSV_PATH = PROFILE_DIR / "skills_inventory.csv"
 OUTPUT_DIR = Path(__file__).parent.parent / "output"
 
-MODEL = "claude-sonnet-5"  # update if you want a different model
-SCORE_THRESHOLD = 6  # out of 10, only tailor resumes above this
+# Tuning lives in config/tuning.yaml; these are the defaults when that file is
+# absent. settings.py stops the run if the file exists but is malformed.
+from settings import load_letter, load_tuning          # noqa: E402
+
+_TUNING = load_tuning()
+MODEL = _TUNING["model"]
+SCORE_THRESHOLD = _TUNING["score_threshold"]
 
 client = anthropic.Anthropic()  # picks up ANTHROPIC_API_KEY from env
 
@@ -132,7 +137,7 @@ def parse_json_response(text: str) -> dict:
         return json.loads(stripped)
 
 
-SALARY_FLOOR = 160_000   # at or above this, seniority concerns don't apply
+SALARY_FLOOR = _TUNING["salary_floor"]   # at or above, seniority concerns don't apply
 
 # "$150,000 - $185,000" / "$150K-$185K" / "$150,000 to $250,000" and the
 # en/em-dash variants pay-transparency boilerplate tends to use
@@ -338,12 +343,12 @@ RESUME_SCHEMA_EXAMPLE = {
 
 # Fitting two pages. Measured against real output: a 977-word resume with 33
 # bullets fits; 1,071 words with 37 bullets spilled onto a third page.
-MAX_RESUME_WORDS = 900
-MAX_SUMMARY_WORDS = 80
+MAX_RESUME_WORDS = _TUNING["max_resume_words"]
+MAX_SUMMARY_WORDS = _TUNING["max_summary_words"]
 # bullets allowed per role by position, newest first. Recent roles carry the
 # argument; the oldest are there for continuity, not detail.
-BULLETS_BY_POSITION = [6, 6, 3, 3, 5, 3]
-BULLETS_TAIL = 2                 # anything beyond the list above
+BULLETS_BY_POSITION = _TUNING["bullets_by_position"]
+BULLETS_TAIL = _TUNING["bullets_tail"]        # anything beyond the list above
 
 
 def fit_to_two_pages(resume: dict) -> dict:
@@ -399,8 +404,8 @@ def fit_to_two_pages(resume: dict) -> dict:
     return resume
 
 
-MAX_SKILL_CATEGORIES = 5
-MAX_TERMS_PER_CATEGORY = 10
+MAX_SKILL_CATEGORIES = _TUNING["max_skill_categories"]
+MAX_TERMS_PER_CATEGORY = _TUNING["max_terms_per_category"]
 
 
 def normalize_skills(resume: dict) -> dict:
@@ -571,19 +576,18 @@ def _sanitize_filename_part(text: str) -> str:
     return text[:80].strip()
 
 
-# Fixed frame, modelled on the letters Craig has actually sent. Only the
-# role title and the grouped achievement block change per posting.
-CL_POSITIONING = ("I am a senior data, marketing, and analytics leader, with hands-on "
-                  "expertise in building innovative and transformative data and analytics "
-                  "systems that deliver actionable insights and drive business performance "
-                  "across many verticals.")
-CL_LEAD_IN = "Select highlights of my career contributions and achievements thus far include:"
-CL_CLOSING_PARA = ("For a more detailed illustration of my skills and experience, please see "
-                   "my resume. I would welcome the chance to discuss how my background fits "
-                   "what you are building.")
+# Fixed frame, modelled on letters that have actually been sent. Only the role
+# title and the grouped achievement block change per posting. These three
+# paragraphs are the most personal thing in the pipeline, so they live in
+# config/letter.yaml; the values below are the fallback when that file is
+# absent. Edit the file, not this.
+_LETTER, AI_TELL_PATTERNS = load_letter()
+CL_POSITIONING = _LETTER["positioning"]
+CL_LEAD_IN = _LETTER["lead_in"]
+CL_CLOSING_PARA = _LETTER["closing_para"]
 
 COVER_LETTER_SCHEMA_EXAMPLE = {
-    "greeting": "Dear Hiring Committee:",
+    "greeting": _LETTER["greeting"],
     "opening": "Please consider my qualifications for the <exact role title> role at "
                "<company>. <One sentence naming the single most relevant thing about this "
                "candidate for THIS posting.>",
@@ -602,7 +606,7 @@ COVER_LETTER_SCHEMA_EXAMPLE = {
         {"header": "Third theme", "bullets": ["evidence", "evidence"]},
     ],
     "closing_para": "<leave exactly as given in the prompt>",
-    "sign_off": "Sincerely,",
+    "sign_off": _LETTER["sign_off"],
     # placeholders only: both are overwritten from the profile after the
     # model returns, so no real contact details belong in this file
     "name": "<your name>",
@@ -610,38 +614,15 @@ COVER_LETTER_SCHEMA_EXAMPLE = {
 }
 
 
-AI_TELL_PATTERNS = [
-    (r"[—–]", "em/en dash"),
-    (r"\bnot just\b", '"not just"'),
-    (r"\bisn't just\b", '"isn\'t just"'),
-    (r"\bit's not about\b", '"it\'s not about"'),
-    # the ", not <contrasting noun phrase>" flourish -- same rhetorical move
-    # as "not just X but Y", just inverted
-    (r",\s+not\s+(?!only\b)\w+", '", not X" contrast flourish'),
-    (r"\brather than a stretch\b", '"rather than a stretch"'),
-    (r"\bresonate", '"resonate"'),
-    (r"\bdrawn to\b", '"drawn to"'),
-    (r"\bpassionate about\b", '"passionate about"'),
-    (r"\bat the intersection of\b", '"at the intersection of"'),
-    (r"\bexcited by the opportunity\b", '"excited by the opportunity"'),
-    (r"\bwhat excites me most\b", '"what excites me most"'),
-    (r"\bexactly (?:the|that|this) kind of\b", '"exactly that kind of"'),
-    (r"\bcaught my attention for a\b", '"caught my attention for a..."'),
-    (r"\bstruck a chord\b", '"struck a chord"'),
-    (r"\bspearhead", '"spearhead"'),
-    # Filler intensifiers. Craig cut "actually" from "so client teams
-    # actually use the output" -- these add emphasis, never information.
-    (r"\bactually\b", 'filler "actually"'),
-    (r"\btruly\b", 'filler "truly"'),
-    (r"\breally\b", 'filler "really"'),
-    (r"\bincredibly\b", 'filler "incredibly"'),
-]
+# AI_TELL_PATTERNS comes from load_letter() above: the built-in list, plus
+# anything listed under `avoid` in config/letter.yaml. These are writing rules,
+# not universal truths, so they belong with the letter frame rather than here.
 
 
-MAX_LETTER_WORDS = 265      # prompt targets 210; this is the hard ceiling,
-                            # set with slack so the lint doesn't fail a good
-                            # letter over a couple of words
-MAX_SENTENCE_WORDS = 38     # length was never the real problem, nesting was
+# the prompt targets 210; this ceiling carries slack so the lint doesn't fail
+# a good letter over a couple of words
+MAX_LETTER_WORDS = _TUNING["max_letter_words"]
+MAX_SENTENCE_WORDS = _TUNING["max_sentence_words"]   # nesting was the real problem
 
 
 def letter_body(letter: dict) -> str:
@@ -669,8 +650,8 @@ def find_ai_tells(letter: dict) -> list[str]:
     return found
 
 
-MAX_BULLET_WORDS = 42       # bullets are skimmed; past this they read as prose
-MIN_GROUPS = 3
+MAX_BULLET_WORDS = _TUNING["max_bullet_words"]   # past this a bullet reads as prose
+MIN_GROUPS = _TUNING["min_groups"]
 
 # Vague quantifiers the model reaches for when it has no real number.
 INVENTED_SCOPE = re.compile(
@@ -939,8 +920,8 @@ Respond ONLY with JSON, no other text, matching exactly this shape:
         letter["positioning"] = CL_POSITIONING
         letter["lead_in"] = CL_LEAD_IN
         letter["closing_para"] = CL_CLOSING_PARA
-        letter.setdefault("greeting", "Dear Hiring Committee:")
-        letter.setdefault("sign_off", "Sincerely,")
+        letter.setdefault("greeting", _LETTER["greeting"])
+        letter.setdefault("sign_off", _LETTER["sign_off"])
         letter["name"] = profile.get("name", "")
         letter["contact"] = f"{profile.get('email','')}\n{profile.get('phone','')}"
 

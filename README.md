@@ -196,6 +196,56 @@ version got it wrong on real mail:
 Your own edits are safe: a status you typed is never overwritten, and nothing
 moves backwards from interview or offer.
 
+## Making it yours
+
+Four files hold everything personal. Each ships as a `.example`; copy it,
+edit it, and the real one stays out of git.
+
+| File | Holds |
+|---|---|
+| `profile/master_profile.json` | work history, education, positioning |
+| `profile/skills_inventory.csv` | skills, and the ones you're tracking as gaps |
+| `config/titles.csv` | what to search for, and what to exclude |
+| `config/letter.yaml` | the cover letter's fixed paragraphs and the style rules |
+| `config/tuning.yaml` | thresholds, limits, and the model |
+| `config/boards.yaml` | which boards and sources to query |
+
+`titles.csv` is a spreadsheet rather than a YAML list for the same reason the
+skills file is: these change weekly. A row can be switched off with
+`active=no` instead of deleted, and the `notes` column records why a term is
+there. That column earns itself the first time a term looks wrong in six
+months — the entry for `data scien` says "catches Data Scientist AND Data
+Science", which is the distinction that hid every Staff Data Scientist role
+until someone noticed.
+
+`letter.yaml` is the one to edit first. Its three paragraphs appear in every
+letter word for word; only the opening sentence and the achievement groups
+change per posting. It ships with a `[FILL IN: ...]` placeholder rather than
+anyone's real positioning, and `doctor.py` fails while that placeholder is
+still in use.
+
+Every config file is optional and each has a built-in default. What none of
+them do is fail quietly: a typo'd key, a wrong type, an invalid regex or a
+missing column stops the run and names the file and the problem. A config
+that is silently ignored looks exactly like one that works, and this project
+has been bitten by that shape of bug more than once.
+
+## Checking the setup
+
+```bash
+python src/doctor.py            # config, credentials, profile, last run
+python src/doctor.py --dry-run  # also scrape the free sources and count
+```
+
+It makes no API calls and writes nothing. The dry run reports how many
+postings survive your filters and how many have never been scored, so you can
+see what a real run would cost before spending anything. It skips the paid
+LinkedIn source unless you pass `--include-paid`, because a diagnostic that
+bills per result is a bad diagnostic.
+
+Exit code 1 means something is actually broken, so a wrapper can tell
+"misconfigured" from "nothing to do".
+
 ## The profile is two files, and the skills file wins
 
 `profile/master_profile.json` holds work history, education, and positioning

@@ -10,8 +10,15 @@ import subprocess
 import sys
 from pathlib import Path
 
-from scraper import collect_all_postings
-from score_and_tailor import run as score_and_tailor_run
+# Job titles carry characters cp1252 cannot encode, and Windows picks cp1252
+# for stdout whenever output is redirected to a file. Without this a single
+# posting title crashes the whole run. run_nightly.cmd also sets
+# PYTHONIOENCODING; this covers running the pipeline by hand.
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+from scraper import collect_all_postings                    # noqa: E402
+from score_and_tailor import run as score_and_tailor_run    # noqa: E402
 
 SRC_DIR = Path(__file__).parent
 

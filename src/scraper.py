@@ -20,6 +20,8 @@ import requests
 import yaml
 from pathlib import Path
 
+from settings import load_titles
+
 CONFIG_PATH = Path(__file__).parent.parent / "config" / "boards.yaml"
 
 
@@ -766,6 +768,14 @@ def keyword_filter(jobs: list[dict], keywords: list[str], locations: list[str],
 
 def collect_all_postings() -> list[dict]:
     cfg = load_config()
+    # config/titles.csv wins when present; boards.yaml is the fallback, so an
+    # existing setup keeps working until its owner moves the lists over.
+    csv_titles = load_titles()
+    if csv_titles:
+        title_keywords, exclude_titles = csv_titles
+    else:
+        title_keywords = cfg.get("title_keywords") or []
+        exclude_titles = cfg.get("exclude_title_keywords") or []
     all_jobs = []
     for token in cfg.get("greenhouse") or []:
         try:
@@ -789,7 +799,7 @@ def collect_all_postings() -> list[dict]:
             print(f"[warn] ashby/{board} failed: {e}")
     for company in cfg.get("smartrecruiters") or []:
         try:
-            all_jobs.extend(fetch_smartrecruiters(company, cfg.get("title_keywords", [])))
+            all_jobs.extend(fetch_smartrecruiters(company, title_keywords))
         except Exception as e:
             print(f"[warn] smartrecruiters/{company} failed: {e}")
     for account in cfg.get("workable") or []:
@@ -892,9 +902,9 @@ def collect_all_postings() -> list[dict]:
                     limit_per_search=apify_cfg.get("limit_per_search", 25),
                     # bills per result, so filter at the actor rather than here
                     title_include=(apify_cfg.get("title_include")
-                                   or cfg.get("title_keywords") or []),
+                                   or title_keywords),
                     title_exclude=(apify_cfg.get("title_exclude")
-                                   or cfg.get("exclude_title_keywords") or []),
+                                   or exclude_titles),
                 )
                 print(f"  linkedin (apify): {len(hits)} posting(s) across "
                       f"{len(apify_cfg['searches'])} search(es)")
@@ -951,20 +961,19 @@ def collect_all_postings() -> list[dict]:
     others = [j for j in deduped
               if j.get("source") not in ("email", "linkedin")]
 
-    excl = cfg.get("exclude_title_keywords") or []
-    filtered = keyword_filter(others, cfg.get("title_keywords", []),
-                              cfg.get("locations", []), excl)
-    if excl:
-        without = keyword_filter(others, cfg.get("title_keywords", []),
+    filtered = keyword_filter(others, title_keywords, cfg.get("locations", []),
+                              exclude_titles)
+    if exclude_titles:
+        without = keyword_filter(others, title_keywords,
                                  cfg.get("locations", []))
         dropped = len(without) - len(filtered)
         if dropped:
             print(f"  excluded {dropped} junior/unrelated title(s) "
-                  f"from {len(excl)} exclusion term(s)")
+                  f"from {len(exclude_titles)} exclusion term(s)")
 
     if emails:
-        kw = [k.lower() for k in (cfg.get("title_keywords") or [])]
-        ex = [x.lower() for x in excl]
+        kw = [k.lower() for k in title_keywords]
+        ex = [x.lower() for x in exclude_titles]
         kept = [j for j in emails
                 if (not kw or _title_matches(j.get("title", ""), kw))
                 and not (ex and _title_excluded(j.get("title", ""), ex))]
@@ -993,8 +1002,8 @@ def collect_all_postings() -> list[dict]:
             return (_location_matches(loc, locs)
                     or any(n in loc for n in nationwide))
 
-        kept = [j for j in keyword_filter(linkedin, cfg.get("title_keywords", []),
-                                          [], excl) if wanted(j)]
+        kept = [j for j in keyword_filter(linkedin, title_keywords,
+                                          [], exclude_titles) if wanted(j)]
 
         # LinkedIn lists one posting per city, so a single remote role arrives
         # four times with four different job ids. The global dedupe keys on

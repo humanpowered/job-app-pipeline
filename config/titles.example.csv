@@ -1,0 +1,22 @@
+term,mode,active,notes
+marketing analytics,include,yes,
+marketing measurement,include,yes,
+marketing scien,include,yes,catches Marketing Scientist AND Marketing Science(s)
+data scien,include,yes,"catches Data Scientist AND Data Science; ""data science"" alone misses ""Data Scientist"""
+measurement,include,yes,broad on purpose; Measurement Solutions and Measurement & Insights
+incrementality,include,yes,
+experimentation,include,yes,some employers title the role Data Science & Experimentation
+attribution,include,yes,
+customer intelligence,include,yes,
+director of analytics,include,yes,
+head of analytics,include,yes,
+growth analytics,include,no,switched off rather than deleted; turn on to widen the net
+intern,exclude,yes,
+coordinator,exclude,yes,
+junior ,exclude,yes,trailing space avoids matching words that merely start with junior
+entry level,exclude,yes,
+research associate,exclude,yes,"phrase-level: a bare ""associate"" would delete Associate Director roles"
+senior associate,exclude,yes,
+analyst i,exclude,yes,Analyst I / Analyst II Roman-numeral leveling
+supply chain,exclude,yes,demand forecasting is not marketing forecasting
+systems engineer,exclude,yes,Measurement Systems Engineer and similar

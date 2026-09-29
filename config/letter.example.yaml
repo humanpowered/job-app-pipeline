@@ -1,0 +1,36 @@
+# The cover letter's fixed frame and the writing rules the lint enforces.
+# Copy to letter.yaml and rewrite the frame in your own words.
+#
+# This is the most personal file in the project. The paragraphs below appear in
+# every letter word for word; only the opening sentence and the grouped
+# achievements change per posting. `doctor.py` fails while positioning is still
+# the placeholder, because a letter that ships with it reads as unfinished.
+
+frame:
+  greeting: "Dear Hiring Committee:"
+
+  # One sentence: who you are and what you build. Reused in every letter.
+  positioning: >-
+    [FILL IN: one sentence saying who you are and what you build.]
+
+  # Introduces the grouped achievement block.
+  lead_in: "Select highlights of my career contributions and achievements thus far include:"
+
+  closing_para: >-
+    For a more detailed illustration of my skills and experience, please see
+    my resume. I would welcome the chance to discuss how my background fits
+    what you are building.
+
+  sign_off: "Sincerely,"
+
+# Phrases the lint rejects, on top of the built-in list in src/settings.py.
+# A plain string is matched literally; use {pattern, label} for a regex.
+# The built-ins cover the usual machine-written tells: em dashes, "not just X
+# but Y", "passionate about", "at the intersection of", filler intensifiers.
+#
+# Set keep_defaults: false to replace that list entirely instead of adding to it.
+keep_defaults: true
+avoid: []
+  # - "leverage"
+  # - "synergy"
+  # - {pattern: "\\bproven track record\\b", label: '"proven track record"'}

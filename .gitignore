@@ -2,11 +2,16 @@
 profile/*
 !profile/*.example.*
 config/boards.yaml
+config/titles.csv
+config/letter.yaml
+config/tuning.yaml
+config/general_resume_keep.json
 output/
 logs/
 *.docx
 *.csv
 !profile/skills_inventory.example.csv
+!config/*.example.csv
 
 # Secrets
 .env
