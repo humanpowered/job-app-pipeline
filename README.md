@@ -262,6 +262,15 @@ see what a real run would cost before spending anything. It skips the paid
 LinkedIn and Indeed sources unless you pass `--include-paid`, because a
 diagnostic that bills per result is a bad diagnostic.
 
+It reads the last week of logs for two things that hide in plain sight. A board
+token that has been removed fails every night as one `[warn]` line, which is
+how two of them went unnoticed for weeks. And a retry, which exists to absorb a
+transient failure, absorbs a permanent one just as quietly: a prompt or schema
+that has drifted into failing every time looks like a working pipeline billed
+twice. So doctor counts the retries and says when the rate stops looking like
+bad luck. It judges the most recent run on its own as well as the window,
+because a rate averaged over a week hides a failure that started last night.
+
 It also reports a credential that is set for your user account but missing from
 the shell doctor is running in, rather than calling it absent. Some parents
 strip variables from what they hand to child processes, and "you have no API

@@ -379,6 +379,139 @@ def check_dead_sources(window_days: int = 7) -> None:
              f"checked {len(per_run)} run(s)")
 
 
+# --- retries that stopped being transient -----------------------------------
+
+# "    [json] resume response did not parse (Expecting ',' delimiter...)"
+JSON_RETRY = re.compile(r"\[json\] (.+?) response did not parse")
+STYLE_RETRY = re.compile(r"\[style\] rewriting")
+SCORED_LINE = re.compile(r"^\[\d{1,2}/10\]")
+DRAFTED_LINE = re.compile(r"-> (?:resume|cover letter) drafted:")
+LOST_DOC = re.compile(r"\[warn\] (resume|cover letter) (?:failed|still failing):\s*(.*)")
+
+# One retry in ten responses is no longer an occasional bad draft, and paying
+# twice for a quarter of them means something in the prompt or schema is wrong.
+RETRY_RATE_WARN = 0.10
+RETRY_RATE_FAIL = 0.25
+
+
+def check_retries(threshold: int | None = None, window_days: int = 7) -> None:
+    """
+    A retry buys back a transient failure, and it can also hide a real one.
+
+    The JSON retry and the style lint both re-ask the model and carry on, so a
+    prompt or schema that has drifted into failing every time looks like a
+    working pipeline that is quietly billed twice. The retry lines are easy to
+    skim past in a log, which is exactly how two dead board tokens went
+    unnoticed for weeks. Count them and say when the rate stops looking like
+    bad luck.
+    """
+    section(f"Retried responses (last {window_days} days)")
+    logs = sorted(LOGS.glob("pipeline_*.log")) if LOGS.exists() else []
+    cutoff = datetime.now().timestamp() - window_days * 86400
+    logs = [p for p in logs if p.stat().st_mtime >= cutoff]
+    if len(logs) < MIN_RUNS:
+        line(OK, f"only {len(logs)} run(s) logged", "not enough history to judge")
+        return
+
+    by_kind, lost, per_run = {}, [], []
+    for log in sorted(logs, key=lambda p: p.stat().st_mtime, reverse=True):
+        here, style_here, calls_here = 0, 0, 0
+        for raw in log.read_text(encoding="utf-8", errors="replace").splitlines():
+            stripped = raw.strip()
+            m = JSON_RETRY.search(stripped)
+            if m:
+                here += 1
+                by_kind[m.group(1)] = by_kind.get(m.group(1), 0) + 1
+                continue
+            if STYLE_RETRY.search(stripped):
+                style_here += 1
+                continue
+            m = LOST_DOC.search(stripped)
+            if m:
+                lost.append(f"{log.name[9:-4]} {m.group(1)}: {m.group(2)[:50]}")
+                continue
+            # every one of these lines is a model response that parsed
+            if SCORED_LINE.match(stripped) or DRAFTED_LINE.search(stripped):
+                calls_here += 1
+        per_run.append({"name": log.name, "json": here, "style": style_here,
+                        # retries are themselves responses, so they count
+                        "total": calls_here + here + style_here})
+
+    json_retries = sum(r["json"] for r in per_run)
+    style_retries = sum(r["style"] for r in per_run)
+    total = sum(r["total"] for r in per_run)
+    runs_with_json = sum(1 for r in per_run if r["json"])
+    worst = max(((r["json"], r["name"]) for r in per_run), default=(0, ""))
+    rate = json_retries / total if total else 0.0
+
+    # A rate averaged over a week hides a failure that started last night --
+    # the same arithmetic that let the dead board tokens sit for weeks. Judge
+    # the most recent run on its own too, once it has enough responses to mean
+    # something.
+    newest = per_run[0]
+    newest_rate = (newest["json"] / newest["total"]) if newest["total"] else 0.0
+    newest_is_bad = newest["total"] >= 6 and newest_rate >= RETRY_RATE_FAIL
+    kinds = ", ".join(f"{k} x{n}" for k, n in sorted(by_kind.items()))
+    detail = (f"{json_retries} of {total} response(s), {rate:.0%}, "
+              f"in {runs_with_json} of {len(logs)} run(s)"
+              + (f" — {kinds}" if kinds else ""))
+
+    if not json_retries:
+        line(OK, "no malformed JSON responses to retry", f"across {len(logs)} run(s)")
+    elif rate >= RETRY_RATE_FAIL or newest_is_bad:
+        where = ("the last run alone" if newest_is_bad and rate < RETRY_RATE_FAIL
+                 else "the window")
+        line(FAIL, "Malformed JSON is the norm, not an accident",
+             f"{detail}; {newest_rate:.0%} in {newest['name']} — over "
+             f"{RETRY_RATE_FAIL:.0%} across {where}, so check the prompt and "
+             "schema rather than paying twice")
+    elif rate >= RETRY_RATE_WARN or runs_with_json >= MIN_RUNS:
+        line(WARN, "Malformed JSON in every recent run" if runs_with_json >= MIN_RUNS
+             else "Malformed JSON is getting common", detail)
+    else:
+        line(OK, "a few malformed JSON responses, all recovered", detail)
+    if worst[0] >= 3:
+        line(WARN, f"{worst[0]} retries in a single run", worst[1])
+
+    # The style lint re-asking is normal; it doing so every time is not.
+    if style_retries and total:
+        srate = style_retries / total
+        if srate >= RETRY_RATE_FAIL:
+            line(WARN, "The style lint rewrites most letters",
+                 f"{style_retries} rewrite(s), {srate:.0%} — the prompt and the "
+                 "lint disagree about something")
+        else:
+            line(OK, f"{style_retries} style rewrite(s)", f"{srate:.0%} of responses")
+
+    # A draft that failed outright left a document missing, and the run it
+    # happened in says so once and never again. Whether that still matters
+    # depends on what is missing now, not on what failed then: a warning with
+    # nothing to do about it is how warnings stop being read.
+    scored_path = OUTPUT / "scored_postings.json"
+    missing = None
+    if scored_path.exists() and threshold is not None:
+        try:
+            data = json.loads(scored_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            data = None     # check_workspace already reports an unreadable file
+        if data is not None:
+            missing = [e for e in data
+                       if e.get("score", 0) >= threshold
+                       and (not e.get("tailored_resume_json")
+                            or not e.get("cover_letter_json"))]
+
+    if missing:
+        line(WARN, f"{len(missing)} scored posting(s) missing a document",
+             "run: python score_and_tailor.py --repair")
+        for item in lost[-3:]:
+            line(WARN, "A draft failed outright", item)
+    elif lost:
+        line(OK, f"{len(lost)} draft(s) failed outright and were repaired since",
+             f"most recent: {lost[-1]}")
+    elif missing is not None:
+        line(OK, "every qualifying posting has both documents")
+
+
 # --- optional dry run -------------------------------------------------------
 
 def dry_run(info: dict, include_paid: bool) -> None:
@@ -431,6 +564,7 @@ def main() -> int:
     check_profile()
     check_workspace()
     check_dead_sources()
+    check_retries(info.get("threshold"))
 
     if "--dry-run" in sys.argv:
         if not creds.get("anthropic"):
