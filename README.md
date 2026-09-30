@@ -26,6 +26,15 @@ generate -> lint -> violations? -> retry with the violations named -> lint
 
 The prompt still carries the instruction. The lint is what makes it binding.
 
+The same treatment applies to a response that is not valid JSON, which no
+amount of "respond ONLY with JSON" prevents. One resume died on `Expecting ','
+delimiter: line 43 column 6`; the cover letter for the same posting drafted
+fine, and a plain retry produced valid JSON with no prompt change. The parse
+error is now handed back the way a lint violation is, so a transient failure
+costs a few seconds instead of a document. Truncation is the exception and is
+not retried: asking again with the same token budget truncates again, so it
+raises and names the budget to raise.
+
 ## What gets enforced
 
 | Check | What it catches |

@@ -137,6 +137,57 @@ def parse_json_response(text: str) -> dict:
         return json.loads(stripped)
 
 
+def request_json(messages: list[dict], max_tokens: int, what: str,
+                 attempts: int = 2) -> tuple[dict, str]:
+    """
+    Call the model, parse its JSON, and give it one corrective pass when the
+    response does not parse. Returns (data, the raw text that parsed).
+
+    parse_json_response already repairs the usual damage -- code fences, stray
+    prose, // comments, trailing commas. What it cannot fix is JSON that is
+    genuinely malformed, and that happens: one resume died on "Expecting ','
+    delimiter: line 43 column 6", the cover letter for the same posting drafted
+    fine, and a plain retry with no prompt change produced valid JSON. The
+    failure is transient, so treating it as fatal cost a document and a day.
+
+    Same pattern as the style lint below: name the specific violation and hand
+    it back, rather than hoping the next draft happens to be clean.
+
+    `messages` is appended to in place, so a caller that continues the
+    conversation keeps the failed exchange as context.
+
+    Truncation is not retried. Re-asking with the same budget truncates again,
+    so it raises with the budget to change and the function to change it in.
+    """
+    last = None
+    for attempt in range(attempts):
+        resp = client.messages.create(model=MODEL, max_tokens=max_tokens,
+                                      messages=messages)
+        text = extract_text(resp).strip()
+        if resp.stop_reason == "max_tokens":
+            # Surfaces as a confusing "Unterminated string" from the parser
+            # otherwise, which sent me hunting the wrong bug.
+            raise ValueError(
+                f"{what} response truncated at max_tokens "
+                f"({resp.usage.output_tokens} out); raise max_tokens")
+        try:
+            return parse_json_response(text), text
+        except json.JSONDecodeError as exc:
+            last = exc
+            if attempt + 1 >= attempts:
+                break
+            print(f"    [json] {what} response did not parse ({exc}); asking again")
+            messages += [
+                {"role": "assistant", "content": text},
+                {"role": "user", "content":
+                    f"That response is not valid JSON: {exc}. Send the same "
+                    "content again as strictly valid JSON, with no code fences, "
+                    "no comments, no trailing commas, and every newline inside "
+                    "a string escaped as \\n. Respond ONLY with the JSON."},
+            ]
+    raise last
+
+
 SALARY_FLOOR = _TUNING["salary_floor"]   # at or above, seniority concerns don't apply
 
 # "$150,000 - $185,000" / "$150K-$185K" / "$150,000 to $250,000" and the
@@ -299,19 +350,11 @@ stated location only.
 Respond ONLY with JSON, no other text, in this exact shape:
 {{"score": <int 0-10>, "reasoning": "<2-3 sentences>", "overqualification_risk": <true/false>}}
 """
-    resp = client.messages.create(
-        model=MODEL,
-        # 2048, not 500: the seniority rule made this prompt longer and the
-        # model reasons before answering, so a small budget truncates the JSON
-        # mid-string and surfaces as a confusing parse error.
-        max_tokens=2048,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    if resp.stop_reason == "max_tokens":
-        raise ValueError(
-            f"scoring response truncated at max_tokens "
-            f"({resp.usage.output_tokens} out); raise max_tokens in score_posting")
-    result = parse_json_response(extract_text(resp))
+    # 2048, not 500: the seniority rule made this prompt longer and the model
+    # reasons before answering, so a small budget truncates the JSON mid-string
+    # and surfaces as a confusing parse error.
+    result, _ = request_json([{"role": "user", "content": prompt}], 2048,
+                             "scoring")
     if salary:
         result["salary_low"], result["salary_high"] = salary
         if salary[1] >= SALARY_FLOOR:
@@ -558,12 +601,8 @@ skimming for anchors. Format for both:
 Respond ONLY with JSON, no other text, matching exactly this shape:
 {json.dumps(RESUME_SCHEMA_EXAMPLE, indent=2)}
 """
-    resp = client.messages.create(
-        model=MODEL,
-        max_tokens=8192,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    resume = order_experience(parse_json_response(extract_text(resp)), profile)
+    data, _ = request_json([{"role": "user", "content": prompt}], 8192, "resume")
+    resume = order_experience(data, profile)
     return fit_to_two_pages(normalize_skills(resume))
 
 
@@ -902,19 +941,7 @@ Respond ONLY with JSON, no other text, matching exactly this shape:
         # budget and returned no text; at 8192 a letter was still truncated
         # mid-JSON on the second (corrective) pass, which carries the extra
         # context of the rejected draft.
-        resp = client.messages.create(
-            model=MODEL,
-            max_tokens=16384,
-            messages=messages,
-        )
-        text = extract_text(resp).strip()
-        if resp.stop_reason == "max_tokens":
-            # Truncated mid-JSON. Surfaces as a confusing "Unterminated string"
-            # from the parser otherwise, which sent me hunting the wrong bug.
-            raise ValueError(
-                f"response truncated at max_tokens ({resp.usage.output_tokens} out); "
-                "raise max_tokens in draft_cover_letter")
-        letter = parse_json_response(text)
+        letter, text = request_json(messages, 16384, "cover letter")
         # The boilerplate is fixed. Overwrite rather than trusting the model
         # to reproduce it verbatim; it paraphrases otherwise.
         letter["positioning"] = CL_POSITIONING
@@ -1078,8 +1105,15 @@ def repair():
     fixed = []
     for entry in todo:
         label = f"{entry['company']} - {entry['title'][:44]}"
-        base = (Path(entry["tailored_resume_json"]).stem if entry.get("tailored_resume_json")
-                else resume_filename_base(entry["company"], entry["title"]))
+        # Name the repaired document after whichever half already exists, so
+        # the pair keeps matching filenames. Falling back to today's date
+        # dated a repaired resume a day later than its own cover letter.
+        if entry.get("tailored_resume_json"):
+            base = Path(entry["tailored_resume_json"]).stem
+        elif entry.get("cover_letter_json"):
+            base = re.sub(r"_cover$", "", Path(entry["cover_letter_json"]).stem)
+        else:
+            base = resume_filename_base(entry["company"], entry["title"])
         print(f"[{entry['score']}/10] {label}")
 
         if not entry.get("tailored_resume_json"):
