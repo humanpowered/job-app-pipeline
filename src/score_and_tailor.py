@@ -191,44 +191,82 @@ def request_json(messages: list[dict], max_tokens: int, what: str,
 SALARY_FLOOR = _TUNING["salary_floor"]   # at or above, seniority concerns don't apply
 
 # "$150,000 - $185,000" / "$150K-$185K" / "$150,000 to $250,000" and the
-# en/em-dash variants pay-transparency boilerplate tends to use
+# en/em-dash variants pay-transparency boilerplate tends to use.
+#
+# The unit group matters: the LinkedIn actor hands over "Salary: $160,300.00/yr
+# - $253,600.00/yr", and with no way to skip a "/yr" before the dash the whole
+# range failed to match, so the one authoritative figure in the posting was
+# invisible. It also says outright whether the pair is annual or a rate.
 _SALARY_RANGE = re.compile(
-    r"\$\s?(\d{2,3}(?:,\d{3})?(?:\.\d+)?)\s?([kK])?\s*(?:-|–|—|to)\s*\$?\s?"
+    r"\$\s?(\d{2,3}(?:,\d{3})?(?:\.\d+)?)\s?([kK])?"
+    r"(?:\s*/\s*(yr|year|hr|hour|mo|month))?"
+    r"\s*(?:-|–|—|to)\s*\$?\s?"
     r"(\d{2,3}(?:,\d{3})?(?:\.\d+)?)\s?([kK])?")
+
+
+# no \b before "/hr" -- a slash is not a word character, so the boundary never
+# matches and hourly rates slip through
+_RATE_TRAILING = re.compile(r"per\s+hour|hourly|an\s+hour|/\s?h(?:r|our)|\bp/?h\b", re.I)
+_ANNUAL_TRAILING = re.compile(r"/\s?yr|per year|per annum|annually|a year|usd", re.I)
+_PAY_CONTEXT = re.compile(r"salar|compensat|\bpay\b|annual|total target|earn", re.I)
 
 
 def extract_salary_range(text: str) -> tuple[int, int] | None:
     """
-    Pull the largest plausible annual salary range out of a posting.
+    Pull the annual salary range a posting states for the role.
 
-    Returns (low, high) in dollars, or None. Ranges that look like hourly
-    rates or equity percentages are discarded; a posting can mention several
-    numbers, so the widest plausible annual pair wins.
+    Returns (low, high) in dollars, or None.
+
+    This took the largest plausible pair, which is wrong when a posting states
+    more than one range. One listed $160,300-$253,600 for the role and
+    $192,300-$304,200 "in the select locations listed above", and the tracker
+    reported the second -- a premium that applies to a handful of metros and
+    not to the person reading it. Another stated a USD range followed by two
+    CAD ranges, and the largest pair was Canadian dollars recorded as dollars. The range a posting states first is its
+    general one; higher location-adjusted bands follow it.
+
+    So: the first range in a pay context wins, falling back to the first
+    plausible range if nothing is in context.
     """
     text = text or ""
-    best = None
+    candidates: list[tuple[bool, int, int]] = []
+
     for m in _SALARY_RANGE.finditer(text):
-        # "$45.00 - $65.00 per hour" must not become $45K-$65K
-        trailing = text[m.end():m.end() + 30].lower()
-        # no \b before "/hr" -- a slash is not a word character, so the
-        # boundary never matches and hourly rates slip through
-        if re.search(r"per\s+hour|hourly|an\s+hour|/\s?h(r|our)|\bp/?h\b", trailing):
+        trailing = text[m.end():m.end() + 30]
+        leading = text[max(0, m.start() - 60):m.start()]
+        unit = (m.group(3) or "").lower()
+        if unit.startswith(("hr", "hour", "mo", "month")):
+            continue                    # a rate or a monthly figure, not a salary
+        if _RATE_TRAILING.search(trailing):
+            continue                    # "$45.00 - $65.00 per hour"
+
+        raw_low = float(m.group(1).replace(",", ""))
+        raw_high = float(m.group(4).replace(",", ""))
+        # Cents used to disqualify a range outright, on the theory that they
+        # mean an hourly rate. They do on a small number; on a large one they
+        # are just how pay-transparency boilerplate is written, and discarding
+        # "$160,300.00/yr" threw away the one range that was correct.
+        has_cents = "." in m.group(1) or "." in m.group(4)
+        if has_cents and (raw_low < 1000 or raw_high < 1000):
             continue
-        if "." in m.group(1) or "." in m.group(3):
-            continue                    # cents mean a rate, not a salary
 
-        def val(num, k):
-            n = float(num.replace(",", ""))
-            if k or n < 1000:           # "150K" or a bare "$150" meaning 150K
-                n *= 1000
-            return int(n)
+        def val(raw, k):
+            # "150K", or a bare "$150" that can only mean 150K
+            return int(raw * 1000) if (k or raw < 1000) else int(raw)
 
-        low, high = val(m.group(1), m.group(2)), val(m.group(3), m.group(4))
+        low, high = val(raw_low, m.group(2)), val(raw_high, m.group(5))
         if low > high or high < 30_000 or high > 2_000_000:
             continue                    # percentage or noise
-        if best is None or high > best[1]:
-            best = (low, high)
-    return best
+
+        in_context = bool(unit.startswith(("yr", "year"))
+                          or _PAY_CONTEXT.search(leading)
+                          or _ANNUAL_TRAILING.search(trailing))
+        candidates.append((in_context, low, high))
+
+    for in_context, low, high in candidates:
+        if in_context:
+            return low, high
+    return (candidates[0][1], candidates[0][2]) if candidates else None
 
 
 def require_credentials() -> None:

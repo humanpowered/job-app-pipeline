@@ -46,6 +46,7 @@ raises and names the budget to raise.
 | `fit_to_two_pages` | resumes that would spill past two pages |
 | `normalize_skills` | skills formatting drifting between documents |
 | `exclude_title_keywords` | junior and unrelated roles the broad keyword stems drag in, filtered before anything reaches the scorer |
+| `extract_salary_range` | hourly rates read as salaries, and location-premium or foreign-currency bands read as the role's pay |
 
 Each of these exists because of a specific failure that reached a finished
 document. A few worth naming:
@@ -67,6 +68,18 @@ building something the candidate had not built. The lint fired, the retry
 rewrote it, and it turned out the claim was in the profile, accurate to the
 letter and wrong in fact. The instrument was right and the source data was
 bad. Worth remembering when a guardrail flags something you "know" is fine.
+
+**A plausible wrong number is worse than none.** The pay parser took the
+largest annual range it could find, on the theory that a posting mentions many
+numbers and the biggest is the salary. Postings state several ranges on purpose.
+One listed $160,300-$253,600 for the role and $192,300-$304,200 "in the select
+locations listed above", and the tracker recorded the premium band for metros
+the candidate does not live in. Another gave a USD range followed by two CAD
+ranges, and the largest pair was Canadian dollars stored as dollars. The range
+a posting states first is its general one, so the first range in a pay context
+now wins. Separately, cents used to disqualify a range as an hourly rate, which
+threw away `$160,300.00/yr` -- cents mean a rate on a small number and mean
+nothing on a large one.
 
 **A comment is not a guardrail.** A helper carried the comment "generated
 company fields carry descriptors, e.g. 'Golden Hippo (Health/Wellness/CPG,
