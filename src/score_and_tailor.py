@@ -399,7 +399,7 @@ Respond ONLY with JSON, no other text, in this exact shape:
         result["salary_low"], result["salary_high"] = salary
         if salary[1] >= SALARY_FLOOR:
             # belt and braces: the rule above is explicit, but this is a hard
-            # constraint Craig asked for, so enforce it rather than trust it
+            # constraint the user asked for, so enforce it rather than trust it
             result["overqualification_risk"] = False
     return result
 
@@ -745,6 +745,22 @@ INVENTED_SCOPE = re.compile(
     r"across (dozens|numerous|countless))\b", re.I)
 
 
+def _publications_rule(profile: dict) -> str:
+    """
+    The rule about citing published writing, only when there is any.
+
+    This line used to assert flatly that the candidate has published writing.
+    For a profile without a publications list that is an instruction to use
+    something that does not exist, which is the one thing the grounding block
+    above it exists to prevent.
+    """
+    pubs = profile.get("publications")
+    if not pubs:
+        return ""
+    return ("\n- The candidate has published writing listed in the profile. It "
+            "can support a\n  bullet in one clause; do not summarize its contents.")
+
+
 def find_ungrounded_claims(letter: dict, profile: dict) -> list[str]:
     """
     Catch bullets asserting things the profile does not support.
@@ -754,7 +770,7 @@ def find_ungrounded_claims(letter: dict, profile: dict) -> list[str]:
       2. vague quantifiers standing in for scope ("dozens of verticals")
 
     A third -- lifting an industry out of company_descriptor and presenting
-    it as Craig's own client work -- is handled in the prompt, since
+    it as the candidate's own client work -- is handled in the prompt, since
     detecting it reliably needs to know which descriptor a claim came from.
     """
     issues = []
@@ -955,20 +971,18 @@ themselves.
 
 Hard rules that follow from this:
 - Never move an industry, client, vertical, or market from a
-  company_descriptor into a bullet as something Craig did.
+  company_descriptor into a bullet as something the candidate did.
 - Never invent a quantifier. No "dozens of verticals", "numerous clients",
   "many brands" unless that exact scope appears in a highlight. If the
   profile says 12 brands, write 12 brands. If it gives no number, give no
   number.
 - Every metric (percentage, dollar figure, count, time span) must appear in
   the profile. Do not derive, round, combine, or estimate one.
-- If a posting asks for something Craig has not done, leave it out. A
-  shorter letter is better than an inaccurate one.
+- If a posting asks for something the candidate has not done, leave it out.
+  A shorter letter is better than an inaccurate one.
 - Draw only on achievements and metrics present in the profile. Do not
   fabricate experience, employers, titles, or numbers.
-- {profile.get('positioning_notes', '')}
-- Craig has published writing listed in the profile. It can support a
-  bullet in one clause; do not summarize its contents.
+- {profile.get('positioning_notes', '')}{_publications_rule(profile)}
 - If the profile has PLACEHOLDER fields, leave a clear "[FILL IN: ...]"
   marker rather than inventing content.
 

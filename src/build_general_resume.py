@@ -3,7 +3,7 @@ Builds a general, non-tailored resume for autofill tools (Simplify Copilot)
 and for any application that just wants a resume on file.
 
 Differs from the pipeline's tailored resumes in three ways:
-  - covers the full range of Craig's background rather than mirroring one
+  - covers the full range of your background rather than mirroring one
     posting's language
   - selects the strongest metric-bearing highlights per role instead of
     reordering for a specific job

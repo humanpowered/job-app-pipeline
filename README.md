@@ -103,7 +103,7 @@ work you already believe in.
 
 ```mermaid
 flowchart TD
-  CRON["Task Scheduler, nightly"] --> CMD["run_nightly.cmd<br/>logs to logs/pipeline_DATE.log"]
+  CRON["cron or Task Scheduler, nightly"] --> CMD["run_nightly.py<br/>logs to logs/pipeline_DATE.log"]
   CMD --> PIPE["run_pipeline.py"]
 
   subgraph COLLECT["1 · Collect — scraper.py"]
@@ -389,6 +389,40 @@ python src/run_pipeline.py
 
 `profile/` and `config/boards.yaml` are gitignored. The pipeline reads who you
 are from the profile; no personal details live in the code.
+
+## Running it nightly
+
+`src/run_nightly.py` runs the pipeline, reads replies out of the mailbox, and
+writes the morning brief, appending everything to `logs/pipeline_YYYY-MM-DD.log`
+and keeping 30 days of them. Run it directly, or through the wrapper for your
+scheduler:
+
+```bash
+python src/run_nightly.py        # any OS
+./run_nightly.sh                 # macOS, Linux
+run_nightly.cmd                  # Windows
+```
+
+The log is the point, not a side effect. `doctor.py` reads the last week of
+logs to tell a board that has stopped working from one that timed out once, and
+to tell a retry that recovered from a prompt that has started failing every
+time. Neither check can say anything until there are logs to read, so run it
+this way rather than invoking `run_pipeline.py` on a timer.
+
+To schedule it, on **macOS or Linux**, `crontab -e` and a 6am run:
+
+```
+0 6 * * * /full/path/to/run_nightly.sh
+```
+
+On **Windows**, Task Scheduler, pointing at `run_nightly.cmd` with the project
+folder as "Start in". A scheduled task does not always inherit your interactive
+`PATH`, so if it fails to find Python, set `JOB_PIPELINE_PYTHON` to the full
+path of your interpreter; both wrappers honour it.
+
+Exit code 0 means the pipeline finished, and the log's last line says which of
+`[OK]`, `[OK with WARNING]` (the tracker was open in Excel, so nothing was
+saved) or `[ERROR]` applies.
 
 ## Provenance
 

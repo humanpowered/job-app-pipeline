@@ -27,8 +27,25 @@ CONFIG_PATH = Path(__file__).parent.parent / "config" / "boards.yaml"
 
 
 def load_config():
-    with open(CONFIG_PATH) as f:
-        return yaml.safe_load(f)
+    """
+    Read config/boards.yaml, saying what to do when it is not there.
+
+    Every other config file in this project fails with the file name and the
+    problem; this one raised a bare FileNotFoundError with an absolute path,
+    which is the first thing a new user sees if they clone the repo and run the
+    pipeline before copying the example.
+    """
+    if not CONFIG_PATH.exists():
+        raise SystemExit(
+            f"No {CONFIG_PATH.name} found at {CONFIG_PATH}.\n"
+            f"Copy the example and edit it:\n"
+            f"  cp config/boards.example.yaml config/boards.yaml\n"
+            f"Then run `python src/doctor.py` to check the rest of the setup.")
+    try:
+        with open(CONFIG_PATH, encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+    except yaml.YAMLError as exc:
+        raise SystemExit(f"{CONFIG_PATH.name} is not valid YAML: {exc}")
 
 
 def fetch_greenhouse(token: str) -> list[dict]:

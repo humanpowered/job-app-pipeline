@@ -15,10 +15,13 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 SRC = Path(__file__).parent
-OUTPUT_DIR = SRC.parent / "output"
-PROJECT = SRC.parent.parent
+PROJECT = SRC.parent
+OUTPUT_DIR = PROJECT / "output"
+# Inside the project, not above it. This used to be SRC.parent.parent, which
+# happened to be a convenient spot in one person's folder layout and writes a
+# stray file into the parent directory of a clone for everyone else.
 BRIEF = PROJECT / "MORNING_BRIEF.md"
-LOGS = SRC.parent / "logs"
+LOGS = PROJECT / "logs"
 
 FOLLOW_UP_DAYS = 10          # applied this long ago with no status movement
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -179,7 +182,9 @@ def main():
     L.append("## Totals")
     L.append(f"- {len(rows)} postings tracked, {applied} applied, {len(ready)} ready")
     if log_name:
-        L.append(f"- Full log: `job-app-assistant/logs/{log_name}`")
+        # the path as it is on this machine, not as it was on the one where
+        # this line was written
+        L.append(f"- Full log: `{(LOGS / log_name)}`")
 
     BRIEF.write_text("\n".join(L) + "\n", encoding="utf-8")
     print(f"  wrote {BRIEF.name}: {len(scored_now)} new, {len(ready)} ready, "

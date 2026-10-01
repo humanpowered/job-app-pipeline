@@ -1,0 +1,9 @@
+# Line endings the scripts actually need, rather than whatever the checkout
+# platform defaults to.
+#
+# A .sh file checked out with CRLF fails on Linux as "bad interpreter: No such
+# file or directory", which names the interpreter and not the real problem. A
+# .cmd file wants CRLF: cmd.exe mis-parses the last line of an LF-only batch
+# file, and reports the error against something else entirely.
+*.sh  text eol=lf
+*.cmd text eol=crlf
