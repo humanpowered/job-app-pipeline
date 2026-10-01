@@ -33,8 +33,8 @@ to run with, `titles.csv` is what gets searched, and `boards.yaml` is where.
 `tuning.yaml` and `general_resume_keep.json` are optional - both have working
 defaults. Everything else is in **Setup** and **Making it yours** below.
 
-Expect around **$1 a night** in API spend on a search this size. See **What it
-costs** for the measured figures and the levers.
+Expect around **$0.70 a night** in API spend on a search this size. See **What
+it costs** for the measured figures and the levers.
 
 ## The problem this was built to solve
 
@@ -375,10 +375,50 @@ and `doctor.py --dry-run` counts what would be scored before you spend anything.
 `output/scored_postings.json` is skipped, so re-running the same night costs
 nothing and a long-running install converges on scoring only what is new.
 
-**Input dominates by a factor of 35 on scoring.** Every call resends the whole
-profile and the full instruction block, and those bytes are identical across
-every posting in a run. That is exactly the shape prompt caching is for, and
-this pipeline does not use it yet - the clearest remaining saving here.
+**Input dominated by a factor of 35 on scoring, so the profile is cached.**
+Every call resends the whole profile, and those bytes are identical for every
+posting in a run. The prompt is sent as two blocks - the instruction line and
+the profile first, marked `cache_control: ephemeral`, then everything
+posting-specific - so the first call of a run writes a 7,380-token entry and the
+rest read it at a tenth of the price. Measured on the input side, which is all
+caching touches:
+
+| | input cost before | after | |
+|---|---|---|---|
+| Score a posting | $0.0183 | $0.0054 | 70% less |
+| Draft a resume | $0.0196 | $0.0068 | 65% less |
+| Draft a cover letter | $0.0228 | $0.0101 | 56% less |
+
+Holding output constant, a 29-scored, 5-drafted night goes from **$1.14 to
+$0.69**, roughly $34 a month to $21.
+
+Three caveats worth knowing. A write costs 1.25x, so the first posting of a run
+is slightly *more* expensive and the saving starts with the second. Output is
+untouched and varies a lot - the same resume prompt returned 4,287 output tokens
+one run and 7,893 another, which at $10 per million swamps the input saving on
+drafting, so judge drafting cost over a week rather than a call. And the three
+prompts open with different instruction lines, so each keeps its own entry:
+sharing one would mean moving that line after the profile, which is a real
+change to a tuned prompt for about a dollar a month.
+
+The entry lives for five minutes and every read refreshes it, so a run that
+works through postings back to back keeps it warm start to finish - across
+processes too, so a `--repair` a few minutes later reads the same entry. A
+profile much smaller than this one may fall under the 1,024-token minimum, where
+the marker is ignored and costs nothing.
+
+Every run says what it spent and whether the cache was doing its job:
+
+```
+  39 model call(s), 312,480 in / 34,120 out, about $0.69 -- prompt cache saved about $0.41
+```
+
+That line exists because a cache is the easiest thing in this pipeline to break
+without noticing. One changed byte ahead of the breakpoint - a key reordered in
+the profile, a word added to the instruction line - and every call writes a
+fresh entry, reads nothing, and costs more than it did before caching, while
+raising no error and producing identical documents. When writes happen and no
+read follows, the line says so instead of quietly reporting a bigger number.
 
 **The paid sources are the small line.** LinkedIn and Indeed bill per result
 through Apify and ship disabled. A measured Indeed night returned 3 results for
@@ -390,7 +430,7 @@ Two things cost nothing: `doctor.py` in any form, and the test suite.
 ## Tests
 
 ```bash
-python -m unittest discover -s tests        # 118 tests, well under a second
+python -m unittest discover -s tests        # 132 tests, well under a second
 python -m unittest discover -s tests -v     # with names
 ```
 

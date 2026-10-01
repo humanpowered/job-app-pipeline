@@ -137,6 +137,80 @@ def parse_json_response(text: str) -> dict:
         return json.loads(stripped)
 
 
+def profile_preamble(lead: str, profile: dict) -> str:
+    """
+    The opening every prompt shares: one line of instruction and the whole
+    profile. Identical for every posting in a run, which is what makes it worth
+    caching -- see cached_messages below.
+    """
+    return f"{lead}\n\nCANDIDATE PROFILE:\n{json.dumps(profile, indent=2)}\n"
+
+
+def cached_messages(stable: str, rest: str) -> list[dict]:
+    """
+    One user message in two blocks, with the stable half marked for caching.
+
+    Caching is a prefix match, so the only thing that can be cached is text
+    that comes before anything posting-specific. That rules out the long rules
+    blocks, which deliberately sit after the posting; what it leaves is the
+    profile, and the profile is most of the prompt -- scoring sends about 9,100
+    input tokens against 260 out.
+
+    The two blocks concatenate to exactly the string this used to send as one,
+    so the model sees the same prompt it did before. Cache reads cost a tenth
+    of base input and a write costs 1.25x, so this pays for itself on the second
+    posting of a run and every one after it.
+
+    A read also refreshes the 5-minute window, so a run that scores postings
+    back to back keeps the entry warm from start to finish.
+    """
+    return [{"role": "user", "content": [
+        {"type": "text", "text": stable, "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": rest},
+    ]}]
+
+
+# Token tally for the run, so the caching above is observable rather than
+# claimed. A cache that quietly stops being read -- one changed byte in the
+# profile preamble would do it -- costs ten times more per call and reports
+# nothing at all, which is the failure shape this project keeps finding.
+_SPEND = {"fresh": 0, "written": 0, "read": 0, "out": 0, "calls": 0}
+# $ per million tokens for the model in tuning.yaml, used only for the summary
+# line. Wrong rates here cost nothing but a misleading number.
+_RATES = {"claude-sonnet-5": (2.00, 10.00), "claude-sonnet-5-5": (2.00, 10.00),
+          "claude-opus-5": (5.00, 25.00), "claude-haiku-4-5": (1.00, 5.00)}
+
+
+def _tally(usage) -> None:
+    _SPEND["calls"] += 1
+    _SPEND["fresh"] += getattr(usage, "input_tokens", 0) or 0
+    _SPEND["written"] += getattr(usage, "cache_creation_input_tokens", 0) or 0
+    _SPEND["read"] += getattr(usage, "cache_read_input_tokens", 0) or 0
+    _SPEND["out"] += getattr(usage, "output_tokens", 0) or 0
+
+
+def spend_summary() -> str:
+    """One line on what the run cost and whether the cache was doing its job."""
+    if not _SPEND["calls"]:
+        return ""
+    in_rate, out_rate = _RATES.get(MODEL, (2.00, 10.00))
+    cost = (_SPEND["fresh"] / 1e6 * in_rate
+            + _SPEND["written"] / 1e6 * in_rate * 1.25
+            + _SPEND["read"] / 1e6 * in_rate * 0.10
+            + _SPEND["out"] / 1e6 * out_rate)
+    # what those cached reads would have cost at full price
+    saved = _SPEND["read"] / 1e6 * in_rate * 0.90
+    line = (f"  {_SPEND['calls']} model call(s), "
+            f"{_SPEND['fresh'] + _SPEND['written'] + _SPEND['read']:,} in / "
+            f"{_SPEND['out']:,} out, about ${cost:.2f}")
+    if _SPEND["read"]:
+        line += f" -- prompt cache saved about ${saved:.2f}"
+    elif _SPEND["written"]:
+        line += ("  [warn] nothing was read from the prompt cache; the cached "
+                 "prefix is varying between calls")
+    return line
+
+
 def request_json(messages: list[dict], max_tokens: int, what: str,
                  attempts: int = 2) -> tuple[dict, str]:
     """
@@ -163,6 +237,7 @@ def request_json(messages: list[dict], max_tokens: int, what: str,
     for attempt in range(attempts):
         resp = client.messages.create(model=MODEL, max_tokens=max_tokens,
                                       messages=messages)
+        _tally(resp.usage)
         text = extract_text(resp).strip()
         if resp.stop_reason == "max_tokens":
             # Surfaces as a confusing "Unterminated string" from the parser
@@ -361,11 +436,10 @@ def score_posting(posting: dict, profile: dict) -> dict:
             f"{years} experience; flag this risk if relevant."
         )
 
-    prompt = f"""You are helping a job seeker evaluate whether a posting is a good fit.
-
-CANDIDATE PROFILE:
-{json.dumps(profile, indent=2)}
-
+    stable = profile_preamble(
+        "You are helping a job seeker evaluate whether a posting is a good fit.",
+        profile)
+    prompt = f"""
 JOB POSTING:
 Title: {posting['title']}
 Company: {posting['company']}
@@ -393,8 +467,7 @@ Respond ONLY with JSON, no other text, in this exact shape:
     # and surfaces as a confusing parse error. Raised from 2048 after the same
     # thing happened to a resume on a long posting -- the answer here is three
     # sentences, so the budget is for the reasoning, and headroom is free.
-    result, _ = request_json([{"role": "user", "content": prompt}], 4096,
-                             "scoring")
+    result, _ = request_json(cached_messages(stable, prompt), 4096, "scoring")
     if salary:
         result["salary_low"], result["salary_high"] = salary
         if salary[1] >= SALARY_FLOOR:
@@ -593,11 +666,10 @@ def order_experience(resume: dict, profile: dict) -> dict:
 
 
 def tailor_resume(posting: dict, profile: dict) -> dict:
-    prompt = f"""Draft a tailored resume for this candidate applying to this specific posting.
-
-CANDIDATE PROFILE:
-{json.dumps(profile, indent=2)}
-
+    stable = profile_preamble(
+        "Draft a tailored resume for this candidate applying to this specific posting.",
+        profile)
+    prompt = f"""
 JOB POSTING:
 Title: {posting['title']}
 Company: {posting['company']}
@@ -647,7 +719,7 @@ Respond ONLY with JSON, no other text, matching exactly this shape:
     # mid-document. max_tokens is a ceiling, not a charge -- billing follows
     # the tokens actually produced -- so headroom here costs nothing, while
     # being short costs the whole document.
-    data, _ = request_json([{"role": "user", "content": prompt}], 16384, "resume")
+    data, _ = request_json(cached_messages(stable, prompt), 16384, "resume")
     resume = order_experience(data, profile)
     return fit_to_two_pages(normalize_skills(resume))
 
@@ -870,11 +942,10 @@ def find_style_issues(letter: dict, profile: dict | None = None) -> list[str]:
 
 
 def draft_cover_letter(posting: dict, profile: dict) -> dict:
-    prompt = f"""Draft a cover letter for this candidate applying to this specific posting.
-
-CANDIDATE PROFILE:
-{json.dumps(profile, indent=2)}
-
+    stable = profile_preamble(
+        "Draft a cover letter for this candidate applying to this specific posting.",
+        profile)
+    prompt = f"""
 JOB POSTING:
 Title: {posting['title']}
 Company: {posting['company']}
@@ -989,7 +1060,10 @@ Hard rules that follow from this:
 Respond ONLY with JSON, no other text, matching exactly this shape:
 {json.dumps(COVER_LETTER_SCHEMA_EXAMPLE, indent=2)}
 """
-    messages = [{"role": "user", "content": prompt}]
+    # The style loop below appends turns to this; the cached first block stays
+    # byte-identical, so the corrective pass reads the cache rather than
+    # re-sending the profile.
+    messages = cached_messages(stable, prompt)
     letter = None
 
     # The style rules above are hard constraints, and prompt adherence alone
@@ -1132,6 +1206,9 @@ def run(postings: list[dict]):
         save()          # checkpoint, so a later crash can't undo this posting
 
     save()
+    summary = spend_summary()
+    if summary:
+        print(f"\n{summary}")
     if failures:
         print(f"\n  {len(failures)} step(s) failed and were skipped:")
         for posting, stage, err in failures:
