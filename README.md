@@ -5,6 +5,37 @@ drafts a tailored resume and cover letter for the ones worth applying to.
 
 The interesting part is not the drafting. It is what happens after.
 
+## Quickstart
+
+Needs Python 3.10 or newer, and Node 18 or newer to render the .docx files.
+
+```bash
+pip install -r requirements.txt
+cd src && npm install && cd ..
+
+cp config/boards.example.yaml  config/boards.yaml       # which boards to query
+cp config/titles.example.csv   config/titles.csv        # what to search for
+cp config/letter.example.yaml  config/letter.yaml       # your cover letter frame
+cp profile/master_profile.example.json profile/master_profile.json
+cp profile/skills_inventory.example.csv profile/skills_inventory.csv
+
+export ANTHROPIC_API_KEY=...        # the only credential that is required
+
+python src/doctor.py --dry-run      # no API calls; says what is still missing
+python src/run_nightly.py           # the real thing, with a log
+```
+
+Edit the four copied files before the first real run: the profile is who you
+are, `letter.yaml` ships with a `[FILL IN: ...]` placeholder that doctor refuses
+to run with, `titles.csv` is what gets searched, and `boards.yaml` is where.
+`doctor.py` names anything still wrong and exits non-zero, so start there.
+
+`tuning.yaml` and `general_resume_keep.json` are optional - both have working
+defaults. Everything else is in **Setup** and **Making it yours** below.
+
+Expect around **$1 a night** in API spend on a search this size. See **What it
+costs** for the measured figures and the levers.
+
 ## The problem this was built to solve
 
 Prompt instructions do not reliably enforce hard constraints.
@@ -314,10 +345,52 @@ key" is the wrong thing to tell someone whose scheduled run is using one.
 Exit code 1 means something is actually broken, so a wrapper can tell
 "misconfigured" from "nothing to do".
 
+## What it costs
+
+Measured on `claude-sonnet-5` at $2.00 per million input tokens and $10.00 per
+million output, by reading `response.usage` on real calls rather than
+estimating from character counts:
+
+| | input | output | cost |
+|---|---|---|---|
+| Score one posting | 9,141 | 260 | **$0.021** |
+| Draft a resume | 9,787 | 4,287 | $0.062 |
+| Draft a cover letter | 11,393 | 2,081 | $0.044 |
+| A document pair | | | **$0.106** |
+
+Across seven consecutive nights on a search covering 49 Greenhouse boards and a
+dozen other sources, that worked out to between **$0.10 and $2.40 a night**,
+averaging $1.14, or about $34 a month. The spread is the whole story: a quiet
+night scores five postings, and a Monday after a long weekend scores 64.
+
+Four things follow from the shape of those numbers.
+
+**Scoring is the bill, not drafting.** Drafting costs five times more per
+document, but only postings at or above the threshold get documents, so scoring
+29 postings dominates drafting 5 pairs. If you want to spend less, filter
+harder: `titles.csv` and the location list decide what reaches the model at all,
+and `doctor.py --dry-run` counts what would be scored before you spend anything.
+
+**Nothing is scored twice.** A posting whose URL is already in
+`output/scored_postings.json` is skipped, so re-running the same night costs
+nothing and a long-running install converges on scoring only what is new.
+
+**Input dominates by a factor of 35 on scoring.** Every call resends the whole
+profile and the full instruction block, and those bytes are identical across
+every posting in a run. That is exactly the shape prompt caching is for, and
+this pipeline does not use it yet - the clearest remaining saving here.
+
+**The paid sources are the small line.** LinkedIn and Indeed bill per result
+through Apify and ship disabled. A measured Indeed night returned 3 results for
+about $0.002; both are capped by `limit_per_search`, so they stay in cents as
+long as the queries are narrow. Every other source is free.
+
+Two things cost nothing: `doctor.py` in any form, and the test suite.
+
 ## Tests
 
 ```bash
-python -m unittest discover -s tests        # 115 tests, well under a second
+python -m unittest discover -s tests        # 118 tests, well under a second
 python -m unittest discover -s tests -v     # with names
 ```
 
@@ -391,9 +464,10 @@ minutes. Browser extensions built for this already do it better.
 
 ## Setup
 
+The short version is in **Quickstart** at the top. This is the full credential
+list and what each one buys.
+
 ```bash
-pip install -r requirements.txt
-cd src && npm install
 export ANTHROPIC_API_KEY=...        # required (or sign in with `ant auth login`)
 export JOOBLE_API_KEY=...           # optional, aggregator sources
 export ADZUNA_APP_ID=... ADZUNA_APP_KEY=...
@@ -405,18 +479,18 @@ export IMAP_USER=... IMAP_APP_PASSWORD=...   # optional, mailbox source + reply
                                              # never your account password.
 ```
 
-Copy the examples and fill them in:
+Every file you copy in **Quickstart** is gitignored, along with `output/` and
+`logs/`. The pipeline reads who you are from the profile; no personal details
+live in the code. One more example is worth copying once you are running:
 
 ```bash
-cp profile/master_profile.example.json profile/master_profile.json
-cp profile/skills_inventory.example.csv profile/skills_inventory.csv
-cp config/boards.example.yaml config/boards.yaml
 cp config/general_resume_keep.example.json config/general_resume_keep.json
-python src/run_pipeline.py
+cp config/tuning.example.yaml config/tuning.yaml    # thresholds, limits, model
 ```
 
-`profile/` and `config/boards.yaml` are gitignored. The pipeline reads who you
-are from the profile; no personal details live in the code.
+Both are optional - each setting falls back to a working default, and
+`tuning.yaml` is where to change the scoring threshold, the salary floor, and
+the model once you have seen a few nights of output.
 
 ## Running it nightly
 

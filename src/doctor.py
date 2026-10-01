@@ -177,7 +177,13 @@ def check_config() -> dict:
         frame, tells = settings.load_letter()
         line(OK, "letter.yaml" if settings.LETTER_YAML.exists() else "letter defaults",
              f"{len(tells)} phrases the lint rejects")
-        if frame["positioning"] == settings.PLACEHOLDER_POSITIONING:
+        # By marker, not by equality. This compared against the exact default
+        # string, and letter.example.yaml carries a shortened version of it --
+        # so the guard fired only for someone with no letter.yaml at all, and
+        # never for the likely case: copied the example, not yet edited. Every
+        # letter would have gone out with "[FILL IN: ...]" in its first
+        # paragraph.
+        if "[FILL IN" in (frame.get("positioning") or ""):
             line(FAIL, "Cover letter positioning is still the placeholder",
                  "write frame.positioning in config/letter.yaml in your own voice")
 

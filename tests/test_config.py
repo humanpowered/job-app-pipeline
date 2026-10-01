@@ -65,6 +65,30 @@ class TuningYaml(unittest.TestCase):
             self.tuning("- score_threshold\n- 8\n")
 
 
+class PlaceholderPositioning(unittest.TestCase):
+    """The cover letter's first paragraph ships as a [FILL IN: ...] marker, and
+    doctor refuses to run while it is still there. The check compared against
+    the exact default string, which letter.example.yaml does not reproduce word
+    for word -- so copying the example and running produced letters with
+    "[FILL IN: ...]" in the first paragraph and no complaint."""
+
+    def positioning_is_rejected(self, text):
+        return "[FILL IN" in text
+
+    def test_the_default_is_rejected(self):
+        from settings import PLACEHOLDER_POSITIONING
+        self.assertTrue(self.positioning_is_rejected(PLACEHOLDER_POSITIONING))
+
+    def test_the_shipped_examples_wording_is_also_rejected(self):
+        """Shorter than the default, and the reason the old check missed it."""
+        self.assertTrue(self.positioning_is_rejected(
+            "[FILL IN: one sentence saying who you are and what you build.]"))
+
+    def test_real_positioning_is_accepted(self):
+        self.assertFalse(self.positioning_is_rejected(
+            "I build measurement systems that survive a real marketing budget."))
+
+
 class TitlesCsv(unittest.TestCase):
     def titles(self, text):
         with tempfile.TemporaryDirectory() as tmp:
