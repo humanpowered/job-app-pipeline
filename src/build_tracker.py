@@ -126,7 +126,10 @@ def build(verbose: bool = True) -> list[dict]:
     if verbose:
         applied = sum(1 for r in rows if r.get("date_submitted"))
         print(f"  tracker: {len(rows)} rows ({new_count} new, {applied} with a submit date)")
-        print(f"  -> {TRACKER_PATH.name}   status values: {STATUS_VALUES}")
+        # name what was actually written. Saying application_tracker.csv after
+        # falling back to the .NEW.csv contradicts the warning above it, and
+        # the summary is the line people read.
+        print(f"  -> {target.name}   status values: {STATUS_VALUES}")
     return rows
 
 

@@ -11,6 +11,7 @@ search is a coarse first net.
 """
 import hashlib
 import html
+import json
 import os
 import re
 import time
@@ -627,6 +628,67 @@ REAL_BOARD = re.compile(
     r"workable\.com|icims\.com|taleo\.net|oraclecloud\.com|successfactors|jobvite\.com|"
     r"careers?\.[a-z0-9-]+\.[a-z]{2,})", re.I)
 
+# Subjects that are about an application already sent, or an interview already
+# arranged. These are not openings, and no corroboration is needed to know it:
+# a posting alert never says "your application".
+#
+# This exists because tying a reply to a tracker row -- the only test there used
+# to be -- cannot work for the mail that matters. An acknowledgement arrives
+# through the ATS, so its sender is jobvite.com or myworkday.com and its
+# employer name is one company_keys() deliberately discards as a generic host,
+# and the row has to carry a submit date you remembered to type. Four of these
+# were scored as jobs in one night: an acknowledgement sent through Workday
+# reached 6/10, and an interview invitation reached 8/10 and had a resume and
+# cover letter drafted for it.
+#
+# Checked against 243 real subjects from a three-week window: 20 matched, all
+# of them genuinely replies, and nothing that mentions interviews in passing
+# ("How to land a job interview!", "AI Interview Buddy") was touched.
+APPLICATION_SUBJECT = [re.compile(p, re.I) for p in (
+    r"thank(?:s| you) for (?:applying|your application)",
+    r"thank(?:s| you) for (?:your )?interest in",
+    # "your application", and "your Data Scientist application to Stitch Fix"
+    r"\byour\b(?:\s+\S+){0,4}\s+application\b",
+    r"\bapplication\b[^.]{0,20}\b(?:received|submitted|confirmation|status|update)\b",
+    r"\bapplication (?:to|for|with)\b",
+    r"\binterview\b[^.]{0,30}\b(?:confirmation|invitation|invite|scheduled|scheduling|reminder|availability)\b",
+    r"\b(?:schedul\w+|confirm\w*|reschedul\w+|invitation|invite) (?:your |the |an |a )?(?:\w+ ){0,2}interview\b",
+)]
+
+
+def _candidate_name_pattern() -> re.Pattern | None:
+    """
+    An interview subject carries your own full name: "<Employer> Interview |
+    <Your Name> | <Role>". Nothing else in an inbox does --
+    a job alert addresses you by first name at most -- so the full name beside
+    the word "interview" is specific enough to drop the message.
+
+    Read from the profile rather than hardcoded, so this works for whoever
+    runs it. No name, no rule: the other patterns still apply.
+    """
+    try:
+        profile = json.loads((Path(__file__).parent.parent / "profile" /
+                              "master_profile.json").read_text(encoding="utf-8"))
+        name = (profile.get("name") or "").strip()
+    except Exception:
+        return None
+    if len(name.split()) < 2:
+        return None                 # a first name alone matches every job alert
+    return re.compile(rf"\binterview\b.*{re.escape(name)}|"
+                      rf"{re.escape(name)}.*\binterview\b", re.I)
+
+
+_CANDIDATE_INTERVIEW = _candidate_name_pattern()
+
+
+def is_application_subject(subject: str) -> bool:
+    """True when the subject is about an application or interview, not a job."""
+    subject = subject or ""
+    if any(p.search(subject) for p in APPLICATION_SUBJECT):
+        return True
+    return bool(_CANDIDATE_INTERVIEW and _CANDIDATE_INTERVIEW.search(subject))
+
+
 # "Acme is hiring a Director of Analytics"  ->  company, title
 ALERT_HIRING = re.compile(r"^(.+?)\s+is hiring an?\s+(.+)$", re.I)
 # "Director of Analytics at Acme: up to $189K/year"  ->  title, company
@@ -772,8 +834,8 @@ def fetch_email(host: str, user: str, password: str, mailbox: str = "INBOX",
     results: list[dict] = []
 
     # A reply about an application you already sent is not a new opening. The
-    # NewRez interview invitation arrived here as an 8/10 "role" on
-    # 2026-09-29, because its subject matched the title keywords. Reuse the
+    # interview invitation arrived here as an 8/10 "role" once, because its
+    # subject matched the title keywords. Reuse the
     # reply checker's own classifier and matcher rather than a second set of
     # phrases: skipping on the classifier alone would drop a recruiter asking
     # for your availability about a genuinely new job, so a message is only
@@ -791,6 +853,7 @@ def fetch_email(host: str, user: str, password: str, mailbox: str = "INBOX",
             print(f"  [warn] could not read the tracker to filter replies: "
                   f"{type(exc).__name__}")
     replies_skipped = 0
+    subject_skips = 0
 
     for m in imap_messages(host, user, password, mailbox, since_days, max_messages):
         sender, subject, body = m["sender"], m["subject"], m["body"]
@@ -802,11 +865,23 @@ def fetch_email(host: str, user: str, password: str, mailbox: str = "INBOX",
             continue
 
         # Judge this on the subject alone. A reply announces itself there
-        # ("Your application to...", "Newrez Interview | ..."), while a real
+        # ("Your application to...", "<Employer> Interview | ..."), while a real
         # posting mentions interviews and availability in its description: a
         # new Instacart opening was skipped as a reply because its body said
         # "our interview process has four stages" and an Instacart application
         # was already on file.
+        #
+        # Some subjects settle it by themselves and need no tracker row to
+        # corroborate them -- which is just as well, because the mail that
+        # leaked is exactly the mail a tracker row cannot corroborate.
+        if is_application_subject(subject):
+            replies_skipped += 1
+            subject_skips += 1
+            continue
+
+        # Weaker signals -- a bare "interview", a classifier hit on wording
+        # that a recruiter might also use about a genuinely new role -- still
+        # have to tie to something you actually applied to.
         looks_like_reply = (classify_reply(subject, "")
                             or re.search(r"\binterview\b", subject, re.I))
         if applied_rows and looks_like_reply:
@@ -842,8 +917,11 @@ def fetch_email(host: str, user: str, password: str, mailbox: str = "INBOX",
         })
 
     if replies_skipped:
+        # say which rule did the work, so a leak can be diagnosed from the log
+        matched = replies_skipped - subject_skips
         print(f"  email: skipped {replies_skipped} message(s) that are replies "
-              f"about applications you already sent")
+              f"about applications you already sent "
+              f"({subject_skips} by subject, {matched} matched to the tracker)")
     return results
 
 

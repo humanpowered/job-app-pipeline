@@ -350,10 +350,12 @@ stated location only.
 Respond ONLY with JSON, no other text, in this exact shape:
 {{"score": <int 0-10>, "reasoning": "<2-3 sentences>", "overqualification_risk": <true/false>}}
 """
-    # 2048, not 500: the seniority rule made this prompt longer and the model
+    # 4096, not 500: the seniority rule made this prompt longer and the model
     # reasons before answering, so a small budget truncates the JSON mid-string
-    # and surfaces as a confusing parse error.
-    result, _ = request_json([{"role": "user", "content": prompt}], 2048,
+    # and surfaces as a confusing parse error. Raised from 2048 after the same
+    # thing happened to a resume on a long posting -- the answer here is three
+    # sentences, so the budget is for the reasoning, and headroom is free.
+    result, _ = request_json([{"role": "user", "content": prompt}], 4096,
                              "scoring")
     if salary:
         result["salary_low"], result["salary_high"] = salary
@@ -601,7 +603,13 @@ skimming for anchors. Format for both:
 Respond ONLY with JSON, no other text, matching exactly this shape:
 {json.dumps(RESUME_SCHEMA_EXAMPLE, indent=2)}
 """
-    data, _ = request_json([{"role": "user", "content": prompt}], 8192, "resume")
+    # 16384, matching the cover letter: a resume is only ~800 words, but the
+    # model reasons about which highlights to keep before writing any of them,
+    # and a 10k-character posting pushed that past 8192 and truncated the JSON
+    # mid-document. max_tokens is a ceiling, not a charge -- billing follows
+    # the tokens actually produced -- so headroom here costs nothing, while
+    # being short costs the whole document.
+    data, _ = request_json([{"role": "user", "content": prompt}], 16384, "resume")
     resume = order_experience(data, profile)
     return fit_to_two_pages(normalize_skills(resume))
 

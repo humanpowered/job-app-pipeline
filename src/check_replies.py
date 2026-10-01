@@ -2,10 +2,9 @@
 Reads replies from employers out of your mailbox and updates the tracker.
 
 The tracker only ever knew what you typed into it, so an application could sit
-at "applied" for weeks after the company had already answered. On 2026-09-24
-three rejections (Instacart, Rula, #paid) and one scheduled interview (NewRez)
-were all sitting unread in the tracker while the morning brief called them
-"gone quiet".
+at "applied" for weeks after the company had already answered. Three
+rejections and one scheduled interview were once all sitting unread in the
+tracker while the morning brief called them "gone quiet".
 
 What it does NOT do: it never marks anything read, never replies, never
 deletes. The mailbox is opened read-only.

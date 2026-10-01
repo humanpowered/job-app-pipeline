@@ -212,6 +212,28 @@ version got it wrong on real mail:
   match its rejection mail; closing the wrong one is worse than closing
   neither.
 
+The mailbox source has the mirror-image problem: a reply is not an opening, and
+it arrives looking like one. "Your application for Director, Marketing
+Measurement & Testing" matches the title keywords perfectly.
+
+The first attempt reused the matcher above, dropping a message only when it
+tied to an application on file. That is the wrong test, and it fails on exactly
+the mail that matters: an acknowledgement is sent through the ATS, so its
+sender is `jobvite.com` or `myworkday.com`, its employer name is one the
+matcher discards as a generic host, and the tracker row has to carry a submit
+date you remembered to type. Four replies were scored as jobs in one night, one
+of them an interview invitation that reached 8/10 and had documents drafted
+for it.
+
+Some subjects need no corroboration. A posting alert never says "your
+application", so the subject alone settles it, and a subject carrying your own
+full name next to the word "interview" is about you rather than a vacancy. The
+weaker signals — a bare "interview", wording a recruiter might also use about a
+genuinely new role — still have to tie to something you applied to. Checked
+against 243 real subjects from a three-week window: 20 matched, every one of
+them a reply, and nothing that mentions interviews in passing ("How to land a
+job interview!") was touched.
+
 Your own edits are safe: a status you typed is never overwritten, and nothing
 moves backwards from interview or offer.
 
