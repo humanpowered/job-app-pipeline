@@ -314,6 +314,34 @@ key" is the wrong thing to tell someone whose scheduled run is using one.
 Exit code 1 means something is actually broken, so a wrapper can tell
 "misconfigured" from "nothing to do".
 
+## Tests
+
+```bash
+python -m unittest discover -s tests        # 115 tests, well under a second
+python -m unittest discover -s tests -v     # with names
+```
+
+No dependencies beyond the ones the pipeline already needs, no API calls, no
+network, and nothing read from `profile/` or `config/` — every input is built in
+`tests/helpers.py`, so the suite passes on a bare clone before you have
+configured anything. `pytest tests` works too if you prefer it.
+
+What they cover is the argument this README makes: the guardrails. The lints on
+a drafted letter, the reshaping applied to a drafted resume, the pay-range
+parser, the title and mailbox filters, the JSON retry policy, the reply matcher,
+the config loaders refusing bad input, and the two log checks. Each test names
+the failure that made the rule necessary, so the suite doubles as the list of
+things that have gone wrong.
+
+Several deliberately assert what must *not* happen, because that is where the
+cost is. A rejection matched to the wrong application closes a live one. A
+filter that drops too much is invisible: you never see the job it hid.
+
+A suite that passes proves nothing until it has been shown to fail, so the six
+fixes most worth protecting were each reverted to confirm the tests go red. All
+six were caught. If you change a lint or a regex, run these first; if you
+tighten a rule on purpose, expect a test to fail and update it deliberately.
+
 ## The profile is two files, and the skills file wins
 
 `profile/master_profile.json` holds work history, education, and positioning
