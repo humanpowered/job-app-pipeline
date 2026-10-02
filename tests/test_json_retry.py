@@ -33,10 +33,12 @@ class StubClient:
     def __init__(self, *responses):
         self.queue = list(responses)
         self.calls = 0
+        self.seen_kwargs = {}
         self.messages = types.SimpleNamespace(create=self._create)
 
     def _create(self, **kwargs):
         self.calls += 1
+        self.seen_kwargs = kwargs
         return self.queue.pop(0)
 
 
@@ -105,6 +107,25 @@ class RequestJsonRetry(unittest.TestCase):
             st.request_json([{"role": "user", "content": "x"}], 8192, "resume")
         self.assertEqual(st.client.calls, 1)
         self.assertIn("max_tokens", str(caught.exception))
+
+    def test_a_schema_is_sent_as_a_constraint_when_given(self):
+        """The interview's prompt has a conversational job as well as a JSON
+        one, and told to do both it did the human half and dropped the JSON on
+        almost every turn. The schema makes the contract the API's business."""
+        st.client = StubClient(response(GOOD))
+        st.request_json([{"role": "user", "content": "x"}], 8192, "interview",
+                        schema={"type": "object"})
+        sent = st.client.seen_kwargs
+        self.assertEqual(sent["output_config"],
+                         {"format": {"type": "json_schema",
+                                     "schema": {"type": "object"}}})
+
+    def test_no_schema_means_no_output_config(self):
+        """Scoring and drafting only ever produce JSON, so they do not need it,
+        and adding it would change three working call sites."""
+        st.client = StubClient(response(GOOD))
+        st.request_json([{"role": "user", "content": "x"}], 8192, "resume")
+        self.assertNotIn("output_config", st.client.seen_kwargs)
 
     def test_the_corrective_message_quotes_the_parser(self):
         _result, _client, messages = self.run_with(response(BAD), response(GOOD))

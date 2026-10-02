@@ -212,7 +212,7 @@ def spend_summary() -> str:
 
 
 def request_json(messages: list[dict], max_tokens: int, what: str,
-                 attempts: int = 2) -> tuple[dict, str]:
+                 attempts: int = 2, schema: dict | None = None) -> tuple[dict, str]:
     """
     Call the model, parse its JSON, and give it one corrective pass when the
     response does not parse. Returns (data, the raw text that parsed).
@@ -232,11 +232,22 @@ def request_json(messages: list[dict], max_tokens: int, what: str,
 
     Truncation is not retried. Re-asking with the same budget truncates again,
     so it raises with the budget to change and the function to change it in.
+
+    `schema` turns the contract into a constraint the API enforces, rather than
+    an instruction the prompt asks for. It is worth passing wherever the prompt
+    also has a conversational job: the interview asks a person a question and
+    returns a record of the answer, and told to do both it did the human half
+    and dropped the JSON, on almost every turn. The retry above covered for it
+    and doubled the cost of every question. Where a prompt only ever produces
+    JSON -- scoring, drafting -- it is not needed.
     """
     last = None
     for attempt in range(attempts):
+        extra = ({"output_config": {"format": {"type": "json_schema",
+                                               "schema": schema}}}
+                 if schema else {})
         resp = client.messages.create(model=MODEL, max_tokens=max_tokens,
-                                      messages=messages)
+                                      messages=messages, **extra)
         _tally(resp.usage)
         text = extract_text(resp).strip()
         if resp.stop_reason == "max_tokens":

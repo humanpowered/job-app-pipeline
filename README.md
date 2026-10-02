@@ -430,7 +430,7 @@ Two things cost nothing: `doctor.py` in any form, and the test suite.
 ## Tests
 
 ```bash
-python -m unittest discover -s tests        # 152 tests, well under a second
+python -m unittest discover -s tests        # 202 tests, well under a second
 python -m unittest discover -s tests -v     # with names
 ```
 
@@ -472,6 +472,58 @@ bullet. That last part matters: a bullet has already been edited for one reader,
 while the raw material lets the drafting step compose a sentence that fits the
 posting in front of it. Start from `profile/master.example.md`, and add to it over
 months — nobody recalls a career in one sitting.
+
+### The interview
+
+```bash
+python src/interview.py --coverage          # what the record holds; no API calls
+python src/interview.py                     # start wherever it is thinnest
+python src/interview.py --role Northwind    # one employer
+```
+
+The hard part of a master record is not typing, it is recall. Nobody can list
+fifteen accomplishments on demand, and a resume has trained them to name the two
+or three that suited one application. A question they can answer surfaces work
+that "list your achievements" does not.
+
+So `interview.py` asks one question at a time and looks for evidence in
+descending order of strength, stopping at the first rung that holds:
+
+| | |
+|---|---|
+| `metric` | a number they already knew |
+| `derived` | a number worked out from before-and-after |
+| `scope` | the size of the work, not its outcome |
+| `qualitative` | a contribution with no number attached |
+
+The second rung is where most of the value is, because people hold numbers
+without realising. "I automated the reporting" is not a metric. Asked how long
+it took before, how long it takes now and how often it runs, the same person
+produces "three days a month became half a day" — which is. Which rung an
+accomplishment landed on is stored, so the build step can prefer quantified
+material and the person can see their own coverage.
+
+`qualitative` is a real answer and the prompt forbids inventing a number to
+avoid it. Plenty of good work changes no figure anyone measured.
+
+Three rules keep it from becoming tiring, which is the main risk in anything
+that asks a lot of questions:
+
+- **It never asks about something already recorded.** Existing titles go into
+  the prompt, and a near-duplicate is refused locally even if the prompt misses it.
+- **The nudge toward more is a coverage number, shown once per role** — not the
+  question "any more?" asked ten times.
+- **When someone says they are out of material, it offers exactly one more
+  question, from the angle the record least covers**, then lets go for good.
+  People usually mean they are out of the kind of material they have been
+  thinking about; a question about who they hired, or what was broken when they
+  arrived, or what outlasted them, often lands. The counter lives in code rather
+  than in the prompt, because "once, and then stop" is the sort of rule a model
+  drifts on.
+
+Everything is saved as it is confirmed, so stopping mid-role costs nothing and
+Ctrl-C is a supported way to leave. Reckon on two to three cents per
+accomplishment.
 
 If you have ever filled in a resume-development questionnaire for a career coach,
 you already have most of it written down:
