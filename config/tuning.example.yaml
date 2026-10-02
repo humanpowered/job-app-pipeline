@@ -22,3 +22,9 @@ max_letter_words: 265
 max_sentence_words: 38
 max_bullet_words: 42      # past this a bullet reads as prose
 min_groups: 3             # achievement groups in the letter
+
+# Where the morning brief is written, relative to the project root. A path
+# outside the project works ("../MORNING_BRIEF.md") if you would rather read it
+# somewhere else, but the default keeps it in here so a clone does not drop a
+# file into its parent directory.
+brief_path: "MORNING_BRIEF.md"

@@ -49,6 +49,13 @@ TUNING_DEFAULTS = {
     "max_sentence_words": 38,
     "max_bullet_words": 42,
     "min_groups": 3,
+    # Where the morning brief is written, relative to the project root. The
+    # default keeps it inside the project, because anything above the root
+    # writes a stray file into the parent of a clone. Set it to something like
+    # "../MORNING_BRIEF.md" if you would rather read it somewhere else -- moving
+    # this output without saying so loudly leaves a stale copy at the old path
+    # that looks current, which is worse than no brief at all.
+    "brief_path": "MORNING_BRIEF.md",
 }
 _INT_KEYS = {k for k, v in TUNING_DEFAULTS.items() if isinstance(v, int)}
 

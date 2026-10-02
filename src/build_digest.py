@@ -17,11 +17,17 @@ from pathlib import Path
 SRC = Path(__file__).parent
 PROJECT = SRC.parent
 OUTPUT_DIR = PROJECT / "output"
-# Inside the project, not above it. This used to be SRC.parent.parent, which
-# happened to be a convenient spot in one person's folder layout and writes a
-# stray file into the parent directory of a clone for everyone else.
-BRIEF = PROJECT / "MORNING_BRIEF.md"
 LOGS = PROJECT / "logs"
+
+# Where the brief goes is a setting, because it was moved once without that
+# being loud enough: the run kept working and writing a brief, while a stale
+# copy sat at the old path looking current. A file that is read every morning
+# should not move because of a refactor. The default is inside the project --
+# SRC.parent.parent, the old value, writes above the root of a clone.
+sys.path.insert(0, str(SRC))
+from settings import load_tuning  # noqa: E402
+
+BRIEF = (PROJECT / load_tuning()["brief_path"]).resolve()
 
 FOLLOW_UP_DAYS = 10          # applied this long ago with no status movement
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")

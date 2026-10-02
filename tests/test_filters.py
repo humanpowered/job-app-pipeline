@@ -76,6 +76,14 @@ class ApplicationMailIsNotAJob(unittest.TestCase):
         "Re: Acme: Scheduling the interview - October 5th",
         "Track Your Application: Novakid School Lead Head of Growth",
         "Interview confirmation: Director, Analytics",
+        # A reply about a conversation that already happened. One of these
+        # scored 8/10 and had a resume drafted for it, because it mentions
+        # neither an application nor an interview:
+        # "RE: [EXTERNAL] Thank you for the call today - <role> - <name>"
+        "Thank you for the call today",
+        "Thanks for your time yesterday",
+        "Thank you for the conversation - next steps",
+        "Thank you for our meeting",
     ]
 
     # Mail that mentions interviews or applications and is still not a reply.
@@ -111,9 +119,10 @@ class CandidateNameInAnInterviewSubject(unittest.TestCase):
 
     def setUp(self):
         self.saved = scraper._CANDIDATE_INTERVIEW
-        name = re.escape("Jordan Avery")
-        scraper._CANDIDATE_INTERVIEW = re.compile(
-            rf"\binterview\b.*{name}|{name}.*\binterview\b", re.I)
+        # Build it with the production function rather than restating the
+        # pattern here. The first version of this test kept its own copy, so it
+        # went on passing when the real rule grew a branch it did not have.
+        scraper._CANDIDATE_INTERVIEW = scraper._candidate_name_pattern("Jordan Avery")
 
     def tearDown(self):
         scraper._CANDIDATE_INTERVIEW = self.saved
@@ -126,6 +135,23 @@ class CandidateNameInAnInterviewSubject(unittest.TestCase):
         """A recruiter pitching a new role uses your name too."""
         self.assertFalse(is_application_subject(
             "Jordan Avery - Director Marketing Analytics opportunity"))
+
+    def test_name_after_a_reply_prefix_is_dropped(self):
+        """The shape that leaked: a thread you are already in, carrying your
+        full name, about a call rather than an application."""
+        for subject in (
+                "RE: [EXTERNAL] Thank you for the call today - Director, "
+                "Marketing Analytics - Jordan Avery",
+                "Re: Director, Analytics - Jordan Avery",
+                "FWD: Jordan Avery resume",
+                "fw: next steps for Jordan Avery"):
+            with self.subTest(subject=subject):
+                self.assertTrue(is_application_subject(subject))
+
+    def test_a_reply_prefix_without_your_name_is_kept(self):
+        """Recruiters reply into threads about genuinely new roles."""
+        self.assertFalse(is_application_subject(
+            "Re: Director, Marketing Analytics opening at Acme"))
 
     def test_interview_without_the_name_is_kept(self):
         self.assertFalse(is_application_subject("How to land a job interview"))

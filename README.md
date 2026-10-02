@@ -430,7 +430,7 @@ Two things cost nothing: `doctor.py` in any form, and the test suite.
 ## Tests
 
 ```bash
-python -m unittest discover -s tests        # 132 tests, well under a second
+python -m unittest discover -s tests        # 152 tests, well under a second
 python -m unittest discover -s tests -v     # with names
 ```
 
@@ -455,11 +455,47 @@ fixes most worth protecting were each reverted to confirm the tests go red. All
 six were caught. If you change a lint or a regex, run these first; if you
 tighten a rule on purpose, expect a test to fail and update it deliberately.
 
-## The profile is two files, and the skills file wins
+## A resume is a selection; the profile should not be
 
-`profile/master_profile.json` holds work history, education, and positioning
-notes. Achievements carry their metrics; the drafting step is told to use
-nothing that is not in here.
+`master_profile.json` is a working JSON file: 21 keys, work history nested two
+deep, 200-odd lines. Nobody should author that by hand, and the shape of it
+caused a subtler problem than the typing.
+
+The profile it was filled from came out of resumes, and a resume is capped at two
+pages. So it inherited a selection made for one application — 41 accomplishments
+and 898 words for an entire career. The pipeline could only ever draw on what
+survived that cut.
+
+**`profile/master.md` is the fix.** No page limit, one block per accomplishment,
+and each one recorded as Problem / Actions / Results rather than as a finished
+bullet. That last part matters: a bullet has already been edited for one reader,
+while the raw material lets the drafting step compose a sentence that fits the
+posting in front of it. Start from `profile/master.example.md`, and add to it over
+months — nobody recalls a career in one sitting.
+
+If you have ever filled in a resume-development questionnaire for a career coach,
+you already have most of it written down:
+
+```bash
+python src/import_intake.py "2023 Resume Development Document.docx"
+```
+
+That reads the .docx with the standard library — no new dependency — and writes
+`profile/master.md`. Nothing is rewritten, summarised or inferred; every line is
+copied text. Anything the parser does not recognise goes to an **Unparsed**
+section rather than being dropped, because a parser that quietly discards half a
+document looks exactly like one that works. It refuses to overwrite an existing
+`master.md`, and it is additive by nature: it knows only what was written down at
+the time, so roles the document predates still need adding by hand.
+
+Run it on one real document and the output tells you where the gaps are. On the
+document this was built against, one role of four came back with no
+accomplishments at all and the answer "All in resume" — which is exactly the kind
+of hole a resume-derived profile hides.
+
+`profile/master_profile.json` is still what the pipeline reads: work history,
+education, and positioning notes, with achievements carrying their metrics, and
+the drafting step told to use nothing that is not in there.
 
 `profile/skills_inventory.csv` is the source of truth for skills. It is a
 spreadsheet on purpose, because skills change weekly and JSON is a hostile

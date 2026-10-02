@@ -670,29 +670,52 @@ APPLICATION_SUBJECT = [re.compile(p, re.I) for p in (
     r"\bapplication (?:to|for|with)\b",
     r"\binterview\b[^.]{0,30}\b(?:confirmation|invitation|invite|scheduled|scheduling|reminder|availability)\b",
     r"\b(?:schedul\w+|confirm\w*|reschedul\w+|invitation|invite) (?:your |the |an |a )?(?:\w+ ){0,2}interview\b",
+    # A reply about a conversation that already happened. One of these reached
+    # 8/10 and had a resume drafted for it: "RE: [EXTERNAL] Thank you for the
+    # call today - Director, Marketing Analytics - <name>". It mentions neither
+    # an application nor an interview, so every rule above missed it.
+    r"thank(?:s| you) for (?:the|your|our) "
+    r"(?:call|time|conversation|chat|meeting|discussion)",
 )]
 
 
-def _candidate_name_pattern() -> re.Pattern | None:
+def _candidate_name_pattern(name: str | None = None) -> re.Pattern | None:
     """
-    An interview subject carries your own full name: "<Employer> Interview |
-    <Your Name> | <Role>". Nothing else in an inbox does --
-    a job alert addresses you by first name at most -- so the full name beside
-    the word "interview" is specific enough to drop the message.
+    Your own full name in the subject, next to a sign that this is a thread you
+    are already in.
+
+    Two shapes, both seen in real mail. An interview subject carries the name:
+    "<Employer> Interview | <Your Name> | <Role>". And a reply carries it after
+    an Re:/Fwd: prefix: "RE: [EXTERNAL] Thank you for the call today -
+    Director, Marketing Analytics - <Your Name>". Nothing else in an inbox does
+    either -- a job alert addresses you by first name at most -- so the full
+    name plus one of those markers is specific enough to drop the message.
+
+    The name alone is not enough: a recruiter pitching a genuinely new role
+    writes "<Your Name> - Director Marketing Analytics opportunity", and that is
+    a posting worth scoring.
 
     Read from the profile rather than hardcoded, so this works for whoever
     runs it. No name, no rule: the other patterns still apply.
+
+    `name` is for tests, so they can exercise this rule rather than restate it.
+    A test that builds its own copy of the pattern passes while the real one is
+    out of date, which is what happened the first time this grew a branch.
     """
-    try:
-        profile = json.loads((Path(__file__).parent.parent / "profile" /
-                              "master_profile.json").read_text(encoding="utf-8"))
-        name = (profile.get("name") or "").strip()
-    except Exception:
-        return None
+    if name is None:
+        try:
+            profile = json.loads((Path(__file__).parent.parent / "profile" /
+                                  "master_profile.json").read_text(encoding="utf-8"))
+            name = (profile.get("name") or "").strip()
+        except Exception:
+            return None
+    name = name.strip()
     if len(name.split()) < 2:
         return None                 # a first name alone matches every job alert
-    return re.compile(rf"\binterview\b.*{re.escape(name)}|"
-                      rf"{re.escape(name)}.*\binterview\b", re.I)
+    who = re.escape(name)
+    return re.compile(rf"\binterview\b.*{who}"
+                      rf"|{who}.*\binterview\b"
+                      rf"|^\s*(?:re|fw|fwd)\s*:.*{who}", re.I)
 
 
 _CANDIDATE_INTERVIEW = _candidate_name_pattern()
