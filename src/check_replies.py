@@ -52,9 +52,9 @@ CLASSIFIERS = [
         r"we regret to inform",
         r"position has been filled",
         r"filled the (?:position|role)",
-        # Hims & Hers, 2026-09-17: "the Director, Product & Marketing Analytics
-        # role is unfortunately no longer available ... extended an offer to a
-        # finalist." A closed role is a rejection, however politely phrased.
+        # One employer wrote: "the role is unfortunately no longer available
+        # ... extended an offer to a finalist." A closed role is a rejection,
+        # however politely phrased.
         r"no longer available",
         r"no longer open",
         r"(?:has|have) been closed",
@@ -151,10 +151,10 @@ def name_variants(name: str) -> set[str]:
     """
     Both spellings of a joined company name.
 
-    The tracker stores "hims-and-hers"; the email says "Hims & Hers", where the
-    ampersand normalizes to a space and the "and" simply is not there. Compare
-    "himsandhers" against "himshers" and they never meet, so a real rejection
-    went unmatched. Emit the compacted name and the same name with connector
+    The tracker stores an ATS token like "beck-and-rowe"; the email says
+    "Beck & Rowe", where the ampersand normalizes to a space and the "and"
+    simply is not there. Compare "beckandrowe" against "beckrowe" and they
+    never meet, so a real rejection went unmatched. Emit the compacted name and the same name with connector
     words removed.
     """
     compacted = compact(name)
@@ -168,9 +168,9 @@ def company_keys(row: dict) -> set[str]:
     Names that would identify this employer in an email.
 
     The tracker's company column is often an ATS token rather than a name
-    ("jobs" is #paid, "careers" is Airbnb), so the posting URL is a better
-    source: jobs.lever.co/wpromote and boards.greenhouse.io/gametimeunited
-    both carry the employer in the path.
+    (one company's token is literally "jobs", another's is "careers"), so the
+    posting URL is a better source: jobs.lever.co/northwind and
+    boards.greenhouse.io/beckrowe both carry the employer in the path.
     """
     keys = set()
     keys |= name_variants(row.get("company", ""))
@@ -191,8 +191,8 @@ def match_row(message: dict, rows: list[dict]) -> tuple[dict | None, int]:
 
     The employer must be named. An earlier version scored on title tokens
     alone, and since half these applications are called "Director, Marketing
-    Analytics", a Jack Morton rejection matched the OnePay row and House
-    Doctors franchise mail matched FanDuel as an interview. Title now only
+    Analytics", one company's rejection matched another company's row, and
+    franchise-sales mail matched a real application as an interview. Title now only
     disambiguates between roles at the same employer; it can never carry a
     match by itself.
     """
@@ -287,7 +287,7 @@ def main(dry_run: bool = False):
         if not verdict:
             continue
         row, score, runner_up = match_row(m, live)
-        # Two applications at the same employer (two Rula roles here) both
+        # Two applications at the same employer (two roles at one company) both
         # match its rejection mail. Closing the wrong one is worse than
         # closing neither, so anything this close gets reported, not applied.
         too_close = row is not None and (score - runner_up) < 2

@@ -627,8 +627,8 @@ def order_experience(resume: dict, profile: dict) -> dict:
     Force reverse-chronological work history.
 
     Left to itself the model promotes whichever role best matches the
-    posting, which put Deutsch LA (2010-2015) above Golden Hippo (2020-2022)
-    on agency applications. Sorting against master_profile's order is more
+    posting, which put a 2010-2015 employer above a 2020-2022 one on agency
+    applications. Sorting against master_profile's order is more
     reliable than parsing free-text date strings, and the profile is already
     newest-first.
     """
@@ -640,7 +640,7 @@ def order_experience(resume: dict, profile: dict) -> dict:
 
     def match(entry):
         # generated company fields carry descriptors, e.g.
-        # "Golden Hippo (Health/Wellness/CPG, ~$1B revenue)"
+        # "Northwind Retail (Home goods/CPG, ~$1B revenue)"
         name = (entry.get("company") or "").lower()
         for i, c in enumerate(canonical):
             if c.lower() in name or name.split("(")[0].strip() in c.lower():
@@ -652,8 +652,8 @@ def order_experience(resume: dict, profile: dict) -> dict:
         return len(canonical) if i is None else i   # unrecognized falls to the bottom
 
     # The descriptor is context for writing bullets, not resume content. Left
-    # alone it reaches the page as "Golden Hippo (Health, wellness, beauty &
-    # pet care e-commerce/CPG; ~$1B revenue, ~$300M ad spend, 12 brands)",
+    # alone it reaches the page as "Northwind Retail (Home goods, furniture &
+    # outdoor e-commerce/CPG; ~$1B revenue, ~$300M ad spend, 12 brands)",
     # which reads as internal notes and differs resume to resume. Pin the
     # company to the profile's own spelling.
     for entry in entries:
@@ -884,7 +884,7 @@ def specific_pattern(profile: dict | None = None) -> re.Pattern:
         if company:
             names.append(re.escape(company))
             first = company.split()[0]
-            if len(first) > 3:                 # "Deutsch" for "Deutsch LA"
+            if len(first) > 3:                 # "Northwind" for "Northwind Retail"
                 names.append(re.escape(first))
     return re.compile("|".join([r"\d", "%", r"\$"] + names + METHODS), re.I)
 
@@ -1015,8 +1015,8 @@ these patterns and they are an instant credibility hit. Hard rules:
 
 Guidelines:
 - The company name above may come from an applicant-tracking-system token
-  and can be lowercase or run-together ("wpromote", "hims-and-hers"). Write
-  it the way the company brands itself ("Wpromote", "Hims & Hers"). Getting
+  and can be lowercase or run-together ("northwind", "beck-and-rowe"). Write
+  it the way the company brands itself ("Northwind", "Beck & Rowe"). Getting
   a prospective employer's own name wrong reads as careless.
 GROUNDING -- read this carefully, it is the most important rule here.
 

@@ -664,7 +664,7 @@ REAL_BOARD = re.compile(
 APPLICATION_SUBJECT = [re.compile(p, re.I) for p in (
     r"thank(?:s| you) for (?:applying|your application)",
     r"thank(?:s| you) for (?:your )?interest in",
-    # "your application", and "your Data Scientist application to Stitch Fix"
+    # "your application", and "your Data Scientist application to Acme Corp"
     r"\byour\b(?:\s+\S+){0,4}\s+application\b",
     r"\bapplication\b[^.]{0,20}\b(?:received|submitted|confirmation|status|update)\b",
     r"\bapplication (?:to|for|with)\b",
@@ -907,9 +907,9 @@ def fetch_email(host: str, user: str, password: str, mailbox: str = "INBOX",
         # Judge this on the subject alone. A reply announces itself there
         # ("Your application to...", "<Employer> Interview | ..."), while a real
         # posting mentions interviews and availability in its description: a
-        # new Instacart opening was skipped as a reply because its body said
-        # "our interview process has four stages" and an Instacart application
-        # was already on file.
+        # genuinely new opening was skipped as a reply because its body said
+        # "our interview process has four stages" and an application to that
+        # same employer was already on file.
         #
         # Some subjects settle it by themselves and need no tracker row to
         # corroborate them -- which is just as well, because the mail that

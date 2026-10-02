@@ -69,12 +69,12 @@ class ApplicationMailIsNotAJob(unittest.TestCase):
         "Thank you for your application to Senior Director, Analytics and Insights",
         "Head of Data and Analytics (Remote) - Confirmation of your application",
         "Thank you for applying to Acme!",
-        "Thank You for Applying at Attain Finance",
-        "Thank you for Your Interest in Docker!",
-        "Follow up regarding your Data Scientist application to Stitch Fix",
+        "Thank You for Applying at Beck & Rowe",
+        "Thank you for Your Interest in Northwind!",
+        "Follow up regarding your Data Scientist application to Acme Corp",
         "Security code for your application to Acme",
         "Re: Acme: Scheduling the interview - October 5th",
-        "Track Your Application: Novakid School Lead Head of Growth",
+        "Track Your Application: Redwood School Lead Head of Growth",
         "Interview confirmation: Director, Analytics",
         # A reply about a conversation that already happened. One of these
         # scored 8/10 and had a resume drafted for it, because it mentions

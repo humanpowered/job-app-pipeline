@@ -318,7 +318,7 @@ def check_workspace() -> None:
 
 # --- sources that have stopped working --------------------------------------
 
-# "[warn] greenhouse/marqeta failed: 404 ..." and "[warn] jobicy failed: ..."
+# "[warn] greenhouse/sometoken failed: 404 ..." and "[warn] jobicy failed: ..."
 WARN_TOKEN = re.compile(r"\[warn\] ([a-z_]+)/([A-Za-z0-9_\-]+) failed: (.*)")
 WARN_SOURCE = re.compile(r"\[warn\] ([a-z_]+)(?: source)? failed: (.*)")
 MIN_RUNS = 3          # one bad night is weather, three is a pattern
@@ -327,8 +327,8 @@ MIN_RUNS = 3          # one bad night is weather, three is a pattern
 def check_dead_sources(window_days: int = 7) -> None:
     """
     A board token that has been removed announces itself only as a [warn] line
-    that is easy to scroll past. Two died this way (marqeta, amplitude), each
-    failing every night for weeks before anyone read the warning. Flag any
+    that is easy to scroll past. Two board tokens died this way, each failing
+    every night for weeks before anyone read the warning. Flag any
     source that failed in every run of the last week.
     """
     section(f"Sources failing (last {window_days} days)")

@@ -113,7 +113,7 @@ threw away `$160,300.00/yr` -- cents mean a rate on a small number and mean
 nothing on a large one.
 
 **A comment is not a guardrail.** A helper carried the comment "generated
-company fields carry descriptors, e.g. 'Golden Hippo (Health/Wellness/CPG,
+company fields carry descriptors, e.g. 'Northwind Retail (Home goods/CPG,
 ~$1B revenue)'" for weeks. It knew. It sorted correctly and stripped nothing,
 so whether internal profile notes reached the page was left to the model. Two
 finished resumes shipped with them before anyone looked. Twenty-two were
@@ -248,7 +248,7 @@ than no automation at all. Three rules, each of which exists because the naive
 version got it wrong on real mail:
 
 - **The employer must be named** in the message or the sender. Scoring on title
-  alone matched a Jack Morton rejection to the OnePay application, because half
+  alone matched one company's rejection to another company's application, because half
   these roles are called "Director, Marketing Analytics".
 - **Job boards are not employers.** A LinkedIn posting URL made "linkedin" an
   employer key, and that word sits in the footer of most email.
