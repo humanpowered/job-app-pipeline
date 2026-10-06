@@ -105,7 +105,7 @@ apify_indeed:
   enabled: false
   actor: "valig/indeed-jobs-scraper"
   country: "us"               # lowercase; "US" is rejected with a 400
-  date_posted: "1"            # days
+  date_posted: "3"            # days
   limit_per_search: 15
   # This actor has no title filter of its own, and a plain query matches the
   # body of a posting rather than its title -- "director marketing analytics"
@@ -113,8 +113,27 @@ apify_indeed:
   # survived the title filter. Indeed's own query syntax does pass through,
   # including nested booleans, so put the whole filter in the query. Unlike
   # LinkedIn, location "remote" works here.
+  #
+  # Two settings here were measured rather than reasoned about, and both
+  # answers were the opposite of the obvious one.
+  #
+  # The window is 3 days, not 1. At 24 hours this actor returned nothing on
+  # seven of eight nights. It bills per result, so a wider window looks like a
+  # worse deal, but a source that finds nothing costs its entire price for no
+  # return, and an already-scored posting is skipped on the url.
+  #
+  # There is no AND clause for seniority. One was here, filtering to director
+  # and above before billing, which is the right instinct. It was also not the
+  # binding constraint: removing it changed the result count by zero. Add the
+  # seniority terms you want to the query if you like, but measure what it
+  # does before assuming it saved you anything.
+  #
+  # Whatever you put here, make sure every term also has a row in titles.csv.
+  # Querying for a title the filter then rejects means paying for results the
+  # pipeline was built to discard. logs/dropped_paid_titles.csv is where that
+  # shows up.
   searches:
-    - title: 'title:(("marketing analytics" OR "marketing measurement") AND (director OR "head of" OR VP))'
+    - title: 'title:("marketing analytics" OR "marketing measurement" OR "analytics and insights")'
       location: "remote"
 
 # Email -- postings that arrived in your inbox. The only source that surfaces

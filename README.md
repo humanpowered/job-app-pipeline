@@ -230,6 +230,30 @@ URL query parameters, and the default HTTP error message includes the whole
 URL, so every timeout wrote an API key in plaintext to disk. Errors now report
 the status and the query, never the URL.
 
+There is a quieter failure than a crash, and it took longer to find: code that
+works exactly as written while nothing shows what it costs. The LinkedIn and
+Indeed sources bill per result, and `titles.csv` discards most of what they
+return — a typical night keeps 9 of 55. Nothing recorded what the other 46
+were. So when the search config asked Indeed for a title that had no matching
+row in `titles.csv`, the results were paid for and thrown away, and the only
+visible symptom was a source that kept finding nothing. Three settings got
+blamed before anyone tested them, and all three were innocent.
+
+Every discarded paid posting now goes to `logs/dropped_paid_titles.csv` with
+the reason it was dropped, and the nightly log names the titles that matched no
+search term — those are the candidates for a new row. Location drops stay in
+the file, because there is nothing to do about them.
+
+```
+  linkedin: 9 of 55 posting(s) kept after title and location filters
+  linkedin: 46 billed posting(s) dropped (7 no title term, 4 excluded title, 35 location) -> logs/dropped_paid_titles.csv
+      no term matched: Director, Revenue Analytics
+      no term matched: Head of Business Intelligence
+```
+
+The rule this one earned: when a step discards most of its input, make it say
+what it discarded. A count is not a diagnosis.
+
 ## Reading replies back out of the mailbox
 
 A tracker only knows what you typed into it, so an application sits at
@@ -294,6 +318,12 @@ edit it, and the real one stays out of git.
 | `config/letter.yaml` | the cover letter's fixed paragraphs and the style rules |
 | `config/tuning.yaml` | thresholds, limits, and the model |
 | `config/boards.yaml` | which boards and sources to query |
+
+`titles.csv` gates every source, including the two that bill per result, and it
+is applied to those after the bill. So a title worth searching for on Indeed or
+LinkedIn needs a row here as well as a place in the query, or you are paying for
+results the pipeline then discards. `logs/dropped_paid_titles.csv` is where to
+look when a paid source seems quiet.
 
 `titles.csv` is a spreadsheet rather than a YAML list for the same reason the
 skills file is: these change weekly. A row can be switched off with
@@ -430,7 +460,7 @@ Two things cost nothing: `doctor.py` in any form, and the test suite.
 ## Tests
 
 ```bash
-python -m unittest discover -s tests        # 202 tests, well under a second
+python -m unittest discover -s tests        # 218 tests, well under a second
 python -m unittest discover -s tests -v     # with names
 ```
 
@@ -448,12 +478,24 @@ things that have gone wrong.
 
 Several deliberately assert what must *not* happen, because that is where the
 cost is. A rejection matched to the wrong application closes a live one. A
-filter that drops too much is invisible: you never see the job it hid.
+filter that drops too much used to be invisible: you never saw the job it hid,
+which is why the dropped-posting log above exists.
 
 A suite that passes proves nothing until it has been shown to fail, so the six
 fixes most worth protecting were each reverted to confirm the tests go red. All
-six were caught. If you change a lint or a regex, run these first; if you
-tighten a rule on purpose, expect a test to fail and update it deliberately.
+six were caught.
+
+The same exercise on the dropped-posting tests is the better advertisement for
+the method, because it failed. Five of six mutations went red; the sixth, which
+swapped the order of the two title checks, passed. The test meant to pin that
+order used "Marketing Analytics Intern", which matches a search term *and* hits
+an exclusion, so both orderings agreed on the answer and the test could not tell
+them apart. It needed a title that matches no term and is also excluded. The
+test was rewritten, not the code. A test you have not tried to break is a guess
+about what it covers.
+
+If you change a lint or a regex, run these first; if you tighten a rule on
+purpose, expect a test to fail and update it deliberately.
 
 ## A resume is a selection; the profile should not be
 

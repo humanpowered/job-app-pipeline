@@ -10,6 +10,10 @@ attribution,include,yes,
 customer intelligence,include,yes,
 director of analytics,include,yes,
 head of analytics,include,yes,
+analytics and insights,include,yes,"without this row the stem is covered only by accident: ""Head of Analytics and Insights"" matches ""head of analytics"", while the commoner ""Director, Analytics and Insights"" matches nothing, because the row above needs the word ""of"""
+analytics & insights,include,yes,employers write it both ways
+commercial analytics,include,yes,
+digital analytics,include,yes,
 growth analytics,include,no,switched off rather than deleted; turn on to widen the net
 intern,exclude,yes,
 coordinator,exclude,yes,

@@ -1028,6 +1028,107 @@ def keyword_filter(jobs: list[dict], keywords: list[str], locations: list[str],
     return [j for j in jobs if matches(j)]
 
 
+DROPPED_LOG = Path(__file__).parent.parent / "logs" / "dropped_paid_titles.csv"
+DROPPED_KEEP_DAYS = 60
+
+
+def drop_reason(job: dict, keywords_lower: list[str],
+                excludes_lower: list[str]) -> str:
+    """
+    Name the title test that rejected a posting, or blame the location.
+
+    Only the title tests are re-run here. Each paid source applies its own
+    location rule -- LinkedIn treats "United States" as remote-compatible,
+    Indeed does not -- so reproducing them would mean a second copy of a rule
+    that can drift from the one that actually ran. Whatever the title tests do
+    not explain was a location drop by elimination.
+    """
+    title = job.get("title") or ""
+    if excludes_lower and _title_excluded(title, excludes_lower):
+        hit = next(x for x in excludes_lower if x in title.lower())
+        return f"title excluded: {hit}"
+    if not _title_matches(title, keywords_lower):
+        return "no title term matched"
+    return "location"
+
+
+def log_dropped(source: str, billed: list[dict], kept: list[dict],
+                keywords: list[str], exclude_titles: list[str]) -> list[dict]:
+    """
+    Record which paid postings the filters threw away, and why.
+
+    LinkedIn and Indeed bill per result and the filters discard most of what
+    comes back -- 9 kept of 55 on a typical night. Nothing recorded what those
+    46 were, so a term missing from titles.csv was invisible: the source simply
+    looked quiet. "commercial analytics" was absent for the life of the filter
+    while boards.yaml was paying Indeed to search for it, and the cost could
+    not be counted after the fact because the titles were gone.
+
+    Returns the dropped postings, annotated with a reason, so the caller can
+    report them. Writing the file is best-effort; a logging failure must never
+    cost a run that has already been paid for.
+    """
+    keywords_lower = [k.lower() for k in keywords]
+    excludes_lower = [x.lower() for x in (exclude_titles or [])]
+    survived = {id(j) for j in kept}
+    dropped = [dict(j, drop_reason=drop_reason(j, keywords_lower, excludes_lower))
+               for j in billed if id(j) not in survived]
+    if not dropped:
+        return dropped
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    header = ["date", "source", "reason", "title", "company", "location", "url"]
+    rows = [[today, source, j["drop_reason"], j.get("title", ""),
+             j.get("company", ""), j.get("location", ""), j.get("url", "")]
+            for j in dropped]
+    try:
+        import csv
+
+        DROPPED_LOG.parent.mkdir(parents=True, exist_ok=True)
+        old = []
+        if DROPPED_LOG.exists():
+            cutoff = (datetime.now()
+                      - timedelta(days=DROPPED_KEEP_DAYS)).strftime("%Y-%m-%d")
+            with open(DROPPED_LOG, newline="", encoding="utf-8") as fh:
+                old = [r for r in csv.reader(fh)
+                       if r and r[0] != "date" and r[0] >= cutoff]
+        with open(DROPPED_LOG, "w", newline="", encoding="utf-8") as fh:
+            w = csv.writer(fh)
+            w.writerow(header)
+            w.writerows(old + rows)
+    except OSError as e:
+        print(f"  [warn] could not write {DROPPED_LOG.name}: {e}")
+    return dropped
+
+
+def report_dropped(source: str, dropped: list[dict]) -> None:
+    """
+    Say in the nightly log what was discarded, leading with the actionable part.
+
+    A location drop is nothing to act on. A title that matched no term is a
+    candidate for titles.csv, so those are named here rather than left in the
+    file -- the point is to see them in the morning without going looking.
+    """
+    if not dropped:
+        return
+    missed = [j for j in dropped if j["drop_reason"] == "no title term matched"]
+    excluded = [j for j in dropped if j["drop_reason"].startswith("title excluded")]
+    located = len(dropped) - len(missed) - len(excluded)
+    print(f"  {source}: {len(dropped)} billed posting(s) dropped "
+          f"({len(missed)} no title term, {len(excluded)} excluded title, "
+          f"{located} location) -> "
+          f"{DROPPED_LOG.parent.name}/{DROPPED_LOG.name}")
+    seen = []
+    for job in missed:
+        title = (job.get("title") or "").strip()
+        if title and title.lower() not in [s.lower() for s in seen]:
+            seen.append(title)
+    for title in seen[:6]:
+        print(f"      no term matched: {title[:72]}")
+    if len(seen) > 6:
+        print(f"      ...and {len(seen) - 6} more distinct title(s) in the log")
+
+
 def collect_all_postings() -> list[dict]:
     cfg = load_config()
     # config/titles.csv wins when present; boards.yaml is the fallback, so an
@@ -1306,6 +1407,8 @@ def collect_all_postings() -> list[dict]:
         print(f"  linkedin: {len(unique)} of {len(linkedin)} posting(s) kept "
               f"after title and location filters"
               + (f" ({dupes} same role in another city)" if dupes else ""))
+        report_dropped("linkedin", log_dropped(
+            "linkedin", linkedin, kept, title_keywords, exclude_titles))
         filtered.extend(unique)
 
     if indeed:
@@ -1328,6 +1431,8 @@ def collect_all_postings() -> list[dict]:
         print(f"  indeed: {len(unique)} of {len(indeed)} posting(s) kept "
               f"after title and location filters"
               + (f" ({dupes} duplicate listing(s))" if dupes else ""))
+        report_dropped("indeed", log_dropped(
+            "indeed", indeed, kept, title_keywords, exclude_titles))
         filtered.extend(unique)
 
     return filtered
