@@ -20,6 +20,7 @@ import os
 import re
 import subprocess
 import sys
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 
@@ -100,10 +101,107 @@ def user_env(name: str) -> str:
         return ""
 
 
+def copies(name: str) -> list[tuple[str, str]]:
+    """
+    Every non-empty value of a credential, with where it came from.
+
+    This shell and the user environment can disagree -- one set before a fix,
+    one after -- and the nightly run reads the user environment, so both are
+    checked when they differ.
+    """
+    here, user = os.environ.get(name, ""), user_env(name)
+    if here and here == user:
+        return [("", here)]
+    found = []
+    if here:
+        found.append(("in this shell", here))
+    if user:
+        found.append(("in your user environment", user))
+    return found
+
+
+def credential_shape(name: str, value: str) -> tuple[str, str]:
+    """
+    (reason it cannot work, reason it looks wrong) for one credential value;
+    either may be empty.
+
+    Non-empty is not the same as set. On 2026-10-15 six of seven credentials
+    held a single Ctrl+V character, pasted into a prompt that does not paste,
+    and this check called all of them fine. The run that followed failed every
+    keyed source, every scoring call and the mailbox.
+
+    The reasons never quote the value, not even a few characters of it: this
+    output gets pasted into chats and issues.
+    """
+    if any(unicodedata.category(c) == "Cc" for c in value):
+        return "it contains a control character, which no key does", ""
+    if value != value.strip():
+        return "it has leading or trailing whitespace", ""
+    if name == "ANTHROPIC_API_KEY" and not value.startswith("sk-ant-"):
+        return "", "Anthropic API keys start with sk-ant-"
+    if name == "IMAP_USER" and "@" not in value:
+        return "", "it should be a full email address"
+    if name == "IMAP_APP_PASSWORD" and not re.fullmatch(r"[A-Za-z]{16}",
+                                                        value.replace(" ", "")):
+        return "", "a Google app password is 16 letters once spaces are removed"
+    return "", ""
+
+
+def vet(names: list[str]) -> bool:
+    """Report any of these credentials that cannot work or look wrong. False
+    when at least one cannot work."""
+    usable = True
+    for name in names:
+        for where, value in copies(name):
+            broken, odd = credential_shape(name, value)
+            label = f"{name} {where}".rstrip()
+            if broken:
+                usable = False
+                line(FAIL, f"{label} is not usable", f"{broken} (length {len(value)})")
+            elif odd:
+                line(WARN, f"{label} does not look right", f"{odd} (length {len(value)})")
+    return usable
+
+
 def check_credentials() -> dict:
     section("Credentials")
     have = {}
 
+    if not vet(["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]):
+        # the SDK takes the environment variable before any sign-in on disk,
+        # so a broken key is broken however else the machine is signed in
+        line(FAIL, "No usable Anthropic credential", "nothing can be scored or drafted")
+        have["anthropic"] = False
+    else:
+        have["anthropic"] = check_anthropic()
+
+    optional = {
+        "jooble": (["JOOBLE_API_KEY"], "Jooble and the company watchlist"),
+        "adzuna": (["ADZUNA_APP_ID", "ADZUNA_APP_KEY"], "the Adzuna source"),
+        "apify": (["APIFY_TOKEN"], "LinkedIn and Indeed (paid, billed per result)"),
+        "imap": (["IMAP_USER", "IMAP_APP_PASSWORD"], "the mailbox source and reply checking"),
+    }
+    for name, (vars_, what) in optional.items():
+        usable = vet(vars_)
+        missing = [v for v in vars_ if not os.environ.get(v)]
+        # a variable this shell cannot see may still be set for the user, and
+        # the nightly run would find it -- say which case it is
+        elsewhere = [v for v in missing if user_env(v)]
+        absent = [v for v in missing if v not in elsewhere]
+        have[name] = not missing and usable
+        if absent:
+            line(WARN, f"{', '.join(absent)} not set", f"{what} will be skipped")
+        elif not usable:
+            pass            # vet() has already said which one and why
+        elif elsewhere:
+            line(OK, f"{name} credentials set in your user environment",
+                 "not visible to this shell; the nightly run gets them")
+        else:
+            line(OK, f"{name} credentials set", what)
+    return have
+
+
+def check_anthropic() -> bool:
     anthropic_ok = bool(os.environ.get("ANTHROPIC_API_KEY")
                         or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
     if not anthropic_ok and user_env("ANTHROPIC_API_KEY"):
@@ -123,29 +221,7 @@ def check_credentials() -> dict:
         line(OK, "ANTHROPIC_API_KEY set")
     elif not anthropic_ok:
         line(FAIL, "No Anthropic credential", "nothing can be scored or drafted")
-    have["anthropic"] = anthropic_ok
-
-    optional = {
-        "jooble": (["JOOBLE_API_KEY"], "Jooble and the company watchlist"),
-        "adzuna": (["ADZUNA_APP_ID", "ADZUNA_APP_KEY"], "the Adzuna source"),
-        "apify": (["APIFY_TOKEN"], "LinkedIn and Indeed (paid, billed per result)"),
-        "imap": (["IMAP_USER", "IMAP_APP_PASSWORD"], "the mailbox source and reply checking"),
-    }
-    for name, (vars_, what) in optional.items():
-        missing = [v for v in vars_ if not os.environ.get(v)]
-        # a variable this shell cannot see may still be set for the user, and
-        # the nightly run would find it -- say which case it is
-        elsewhere = [v for v in missing if user_env(v)]
-        absent = [v for v in missing if v not in elsewhere]
-        have[name] = not missing
-        if absent:
-            line(WARN, f"{', '.join(absent)} not set", f"{what} will be skipped")
-        elif elsewhere:
-            line(OK, f"{name} credentials set in your user environment",
-                 "not visible to this shell; the nightly run gets them")
-        else:
-            line(OK, f"{name} credentials set", what)
-    return have
+    return anthropic_ok
 
 
 # --- configuration ----------------------------------------------------------

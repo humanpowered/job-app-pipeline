@@ -10,7 +10,7 @@ from datetime import datetime
 
 import helpers  # noqa: F401  -- puts src/ on the path; must come first
 
-from check_replies import classify, company_keys, match_row, name_variants
+from check_replies import classify, company_keys, match_row, name_variants, overruled
 
 
 def message(subject, body="", sender="recruiter@acme.com", when="2026-09-20"):
@@ -155,6 +155,22 @@ class MatchRow(unittest.TestCase):
                     sender="hr@acmeco.com"), rows)
         self.assertEqual(best["title"], "Director, Marketing Analytics")
         self.assertGreaterEqual(score - runner_up, 2)
+
+
+class Overruled(unittest.TestCase):
+    # An acknowledgement read as an interview was put back to "applied" by
+    # hand, and the same mail would have advanced it again on the next run.
+    def test_a_corrected_verdict_is_not_applied_again(self):
+        r = {"notes": "[not interview: Workable confirmation] [acknowledged 2026-10-13]"}
+        self.assertTrue(overruled(r, "interview"))
+
+    def test_overruling_one_verdict_leaves_the_others_alone(self):
+        r = {"notes": "[not interview: Workable confirmation]"}
+        self.assertFalse(overruled(r, "rejected"))
+
+    def test_the_auto_note_is_not_an_override(self):
+        self.assertFalse(overruled({"notes": "[interview 2026-10-13 by email]"}, "interview"))
+        self.assertFalse(overruled({"notes": None}, "interview"))
 
 
 if __name__ == "__main__":

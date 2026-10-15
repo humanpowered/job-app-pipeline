@@ -460,7 +460,7 @@ Two things cost nothing: `doctor.py` in any form, and the test suite.
 ## Tests
 
 ```bash
-python -m unittest discover -s tests        # 218 tests, well under a second
+python -m unittest discover -s tests        # 238 tests, well under a second
 python -m unittest discover -s tests -v     # with names
 ```
 

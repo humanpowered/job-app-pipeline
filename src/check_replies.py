@@ -89,6 +89,17 @@ COMPILED = [(name, [re.compile(p, re.I) for p in pats]) for name, pats in CLASSI
 # tell us. Never touched.
 TERMINAL = {"offer", "rejected", "passed", "closed", "screening", "interview"}
 
+def overruled(row: dict, verdict: str) -> bool:
+    """True when the notes say this verdict was already checked and is wrong.
+
+    The mail stays in the search window for weeks, so a status put back by hand
+    is changed again by the next run unless something records the decision. A
+    Workable acknowledgement was once read as an interview; once corrected,
+    "[not interview" in its notes keeps it corrected.
+    """
+    return f"[not {verdict}" in (row.get("notes") or "").lower()
+
+
 STOPWORDS = {"the", "and", "of", "for", "at", "a", "an", "inc", "llc", "corp",
              "company", "group", "careers", "jobs", "team", "remote", "us"}
 
@@ -292,7 +303,10 @@ def main(dry_run: bool = False):
         # closing neither, so anything this close gets reported, not applied.
         too_close = row is not None and (score - runner_up) < 2
         if not row or score < 5 or too_close:
-            if verdict in ("rejected", "interview") and row:
+            # A tie on a row already settled (rejected by hand after an earlier
+            # brief asked) is not worth asking about every morning.
+            settled = row is not None and (row.get("status") or "").strip().lower() in TERMINAL
+            if verdict in ("rejected", "interview") and row and not settled:
                 unsure.append({"company": row.get("company", ""),
                                "title": row.get("title", ""),
                                "verdict": verdict, "score": score,
@@ -307,6 +321,8 @@ def main(dry_run: bool = False):
             continue                       # never move backwards or overwrite
         if current not in ("", "applied"):
             continue                       # something you typed; leave it alone
+        if overruled(row, verdict):
+            continue                       # you already said this mail is not that
 
         when = (m["date"].date() if m["date"] else date.today()).isoformat()
         change = {"company": row.get("company", ""), "title": row.get("title", ""),
